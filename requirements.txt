@@ -1,0 +1,5 @@
+DrissionPage==4.1.0.18
+DrissionPage==4.1.0.18
+PyQt5==5.15.11
+PyQt5_sip==12.17.0
+Requests==2.32.4
