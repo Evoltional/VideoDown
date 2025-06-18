@@ -41,11 +41,13 @@ python VideoDownLoad.py
 ### 打包应用
 
 ```bash
-pyinstaller VideoDownLoad.spec
+pyinstaller VideoDownLoad.py
 ```
 
 ### 补充
 批量下载后推荐使用 [Organize](https://github.com/Evoltional/Organize) 对文件进行整理
+
+绕过 Cloudflare TurnStile 部分参考自 [CloudflareBypassForScraping](https://github.com/sarperavci/CloudflareBypassForScraping)
 
 ## 许可证
 
