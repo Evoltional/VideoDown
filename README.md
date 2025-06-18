@@ -1,8 +1,15 @@
-Hanime Video Downloader
+# Hanime视频下载器
 
-Hanime Video Downloader 是一个基于Python的图形界面应用程序，用于从hanime1.me网站批量下载视频内容。该工具使用PyQt5实现用户友好的界面，通过DrissionPage库自动化浏览器操作，并实现了Cloudflare验证码绕过机制。
+这是一个使用Python编写的Hanime视频下载器，支持多线程下载。
 
-功能特性：
+## 前置条件
+
+- Python 3.10 或更高版本
+- PyQt5
+- DrissionPage
+- requests
+
+## 功能特性
 
 用户友好界面：直观的GUI设计，支持深色主题
 
@@ -16,57 +23,34 @@ Hanime Video Downloader 是一个基于Python的图形界面应用程序，用�
 
 进度监控：实时显示下载进度和日志信息
 
-技术栈：
+## 运行方法
 
-核心库：
-PyQt5 (GUI框架)
-DrissionPage (浏览器自动化)
-Requests (HTTP请求)
+```bash
+python VideoDownLoad.py
+```
 
-辅助库：
-Threading (多线程处理)
-Random (随机延迟生成)
-OS (文件系统操作)
-
-使用说明
-
+## 使用说明
 需确保网络能访问对应链接
 
 需要本地Chrome浏览器
 
 输入播放列表链接： 在输入框中粘贴hanime1.me播放列表URL
 
-开始下载：
+点击开始下载
 
-点击"开始下载"按钮启动任务
-程序将自动获取播放列表中的所有视频链接
+### 打包应用
 
-管理下载任务：
-使用"停止所有下载"按钮取消所有任务
+```bash
+pyinstaller VideoDownLoad.spec
+```
 
-查看进度：
-实时下载日志显示在日志区域
-当前活动任务显示在任务面板
+### 补充
+批量下载后推荐使用 [Organize](https://github.com/Evoltional/Organize) 对文件进行整理
 
+## 许可证
 
+本项目采用MIT许可证。
 
-注意事项
+## 免责声明
 
-法律合规：
-
-仅下载您有权访问的内容
-
-尊重版权和网站使用条款
-
-使用限制：
-
-网站结构变化可能导致程序失效
-
-频繁请求可能触发IP限制
-
-大量下载后可使用 https://github.com/Evoltional/Organize 进行文件整理
-
-免责声明
-本工具仅用于学习和技术研究目的。开发者不对使用本工具下载的内容承担任何责任。用户应自行确保遵守当地法律法规和目标网站的使用条款。
-
-提示：程序首次运行时将自动创建downloads/目录保存视频文件
+本项目仅供学习和研究使用，请勿用于非法下载。用户需对使用本项目产生的一切后果负责。
