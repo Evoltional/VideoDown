@@ -107,6 +107,26 @@ class CloudflareByPasser:
         return self.is_bypassed()
 
 
+def get_browser():
+    """创建并配置浏览器实例"""
+    options = ChromiumOptions().auto_port()
+    options.set_argument('--no-sandbox')
+    options.set_argument('--disable-gpu')
+    options.set_argument('--disable-dev-shm-usage')
+    options.set_argument('--disable-blink-features=AutomationControlled')
+    options.set_argument('--disable-infobars')
+
+    # 设置用户代理
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+    ]
+    options.set_user_agent(random.choice(user_agents))
+
+    return ChromiumPage(addr_or_opts=options)
+
+
 class VideoDownloadThread(threading.Thread):
     def __init__(self, list_url, log_emitter=None):
         super().__init__()
@@ -120,29 +140,10 @@ class VideoDownloadThread(threading.Thread):
         if self.log_emitter:
             self.log_emitter.log_signal.emit(message)
 
-    def get_browser(self):
-        """创建并配置浏览器实例"""
-        options = ChromiumOptions().auto_port()
-        options.set_argument('--no-sandbox')
-        options.set_argument('--disable-gpu')
-        options.set_argument('--disable-dev-shm-usage')
-        options.set_argument('--disable-blink-features=AutomationControlled')
-        options.set_argument('--disable-infobars')
-
-        # 设置用户代理
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
-        ]
-        options.set_user_agent(random.choice(user_agents))
-
-        return ChromiumPage(addr_or_opts=options)
-
     def get_video_links(self) -> list:
         """获取列表页中的所有视频链接"""
         self.log_message(f"正在从 {self.list_url} 获取视频列表...")
-        browser = self.get_browser()
+        browser = get_browser()
         links = []  # 确保始终返回列表
         try:
             browser.get(self.list_url)
@@ -172,7 +173,7 @@ class VideoDownloadThread(threading.Thread):
             return False
 
         self.log_message(f"正在处理视频: {video_url}")
-        browser = self.get_browser()
+        browser = get_browser()
         try:
             # 访问视频页面
             browser.get(video_url)
