@@ -132,16 +132,45 @@ def get_browser():
 class VideoDownloadThread(threading.Thread):
     def __init__(self, list_url: str, log_emitter: Optional[LogEmitter] = None):
         super().__init__()
+        self.task_frame = None
         self.list_url = list_url
         self.log_emitter = log_emitter
         self.download_dir = "downloads"
         self.running = True
+        self.paused = False
+        self.pause_cond = threading.Condition(threading.Lock())
         self.max_workers = 3  # 同时下载的最大视频数
         os.makedirs(self.download_dir, exist_ok=True)
 
     def log_message(self, message: str):
         if self.log_emitter and hasattr(self.log_emitter, 'log_signal'):
             self.log_emitter.log_signal.emit(message)  # type: ignore
+
+    def pause(self):
+        """暂停下载任务"""
+        self.paused = True
+        self.log_message(f"下载任务已暂停: {self.list_url}")
+
+    def resume(self):
+        """继续下载任务"""
+        with self.pause_cond:
+            self.paused = False
+            self.pause_cond.notify()  # 唤醒等待的线程
+        self.log_message(f"下载任务已继续: {self.list_url}")
+
+    def stop(self):
+        """停止下载任务"""
+        self.running = False
+        with self.pause_cond:
+            self.paused = False
+            self.pause_cond.notify_all()  # 唤醒所有等待的线程
+        self.log_message(f"下载任务已停止: {self.list_url}")
+
+    def wait_if_paused(self):
+        """如果任务被暂停，则等待直到继续"""
+        with self.pause_cond:
+            while self.paused:
+                self.pause_cond.wait()
 
     def get_video_links(self) -> list[str] | None:
         """获取列表页中的所有视频链接"""
@@ -151,6 +180,11 @@ class VideoDownloadThread(threading.Thread):
         try:
             browser.get(self.list_url)
             time.sleep(3)
+
+            # 检查是否被暂停
+            self.wait_if_paused()
+            if not self.running:
+                return None
 
             # 等待播放列表加载
             playlist = browser.ele('#playlist-scroll', timeout=30)
@@ -182,7 +216,7 @@ class VideoDownloadThread(threading.Thread):
 
         while retry_count <= max_retries and not success and self.running:
             retry_count += 1
-            self.log_message(f"尝试下载视频: {video_url} (尝试 {retry_count}/{max_retries+1})")
+            self.log_message(f"尝试下载视频: {video_url} (尝试 {retry_count}/{max_retries + 1})")
             try:
                 success = self._download_video_attempt(video_url)
                 if not success:
@@ -208,6 +242,11 @@ class VideoDownloadThread(threading.Thread):
             browser.get(video_url)
             time.sleep(2)
 
+            # 检查是否被暂停或停止
+            self.wait_if_paused()
+            if not self.running:
+                return False
+
             # 获取下载按钮链接
             download_btn = browser.ele('#downloadBtn', timeout=10)
             if not download_btn:
@@ -225,6 +264,11 @@ class VideoDownloadThread(threading.Thread):
             browser.get(download_page_url)
             time.sleep(3)
 
+            # 检查是否被暂停或停止
+            self.wait_if_paused()
+            if not self.running:
+                return False
+
             # 绕过Cloudflare验证
             cf_bypasser = CloudflareByPasser(browser, log_emitter=self.log_emitter)
             if not cf_bypasser.bypass():
@@ -232,6 +276,11 @@ class VideoDownloadThread(threading.Thread):
                 return False
 
             time.sleep(3)
+
+            # 检查是否被暂停或停止
+            self.wait_if_paused()
+            if not self.running:
+                return False
 
             # 定位下载链接
             download_table = browser.ele('#content-div', timeout=10)
@@ -286,8 +335,15 @@ class VideoDownloadThread(threading.Thread):
 
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
+                    # 检查是否被暂停
+                    self.wait_if_paused()
+
                     if not self.running:
+                        # 如果停止，删除部分下载的文件
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
                         return False
+
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -317,9 +373,13 @@ class VideoDownloadThread(threading.Thread):
             # 创建下载任务
             futures = []
             for i, link in enumerate(video_links):
+                # 检查是否被暂停
+                self.wait_if_paused()
+
                 if not self.running:
                     self.log_message("下载任务已取消")
                     break
+
                 if 'search?query' in link:
                     self.log_message(f"链接: {link} 不是视频链接")
                     continue
@@ -332,8 +392,17 @@ class VideoDownloadThread(threading.Thread):
 
             # 等待所有任务完成
             for i, future in enumerate(as_completed(futures)):
+                # 检查是否被暂停
+                self.wait_if_paused()
+
                 if not self.running:
+                    # 取消所有未完成的任务
+                    for f in futures:
+                        if not f.done():
+                            f.cancel()
+                    self.log_message("下载任务已取消")
                     break
+
                 try:
                     success = future.result()
                     if success:
@@ -344,6 +413,28 @@ class VideoDownloadThread(threading.Thread):
                     self.log_message(f"视频下载出错: {str(e)}")
 
         self.log_message(f"下载任务完成: {self.list_url}")
+
+
+def update_task_status(task_frame: QFrame, status: str, color: str):
+    """更新任务状态显示"""
+    status_label = task_frame.findChild(QLabel, "status_label")
+    if status_label:
+        status_label.setText(f"状态: {status}")
+        status_label.setStyleSheet(f"color: {color};")
+
+    # 更新按钮状态
+    pause_btn = task_frame.findChild(QPushButton, "pause_btn")
+    resume_btn = task_frame.findChild(QPushButton, "resume_btn")
+
+    if status == "运行中":
+        if pause_btn: pause_btn.setEnabled(True)
+        if resume_btn: resume_btn.setEnabled(False)
+    elif status == "已暂停":
+        if pause_btn: pause_btn.setEnabled(False)
+        if resume_btn: resume_btn.setEnabled(True)
+    else:  # 等待中或队列中
+        if pause_btn: pause_btn.setEnabled(False)
+        if resume_btn: resume_btn.setEnabled(False)
 
 
 class HanimeDownloaderApp(QMainWindow):
@@ -385,6 +476,7 @@ class HanimeDownloaderApp(QMainWindow):
                 border: 1px solid #3498db;
                 border-radius: 5px;
                 padding: 5px;
+                min-height: 40px;  /* 添加这行设置高度 */
             }
             QPushButton {
                 background-color: #3498db;
@@ -399,6 +491,9 @@ class HanimeDownloaderApp(QMainWindow):
             }
             QPushButton:pressed {
                 background-color: #1c6ea4;
+            }
+            QPushButton:disabled {
+                background-color: #7f8c8d;
             }
             QTextEdit {
                 background-color: #2c3e50;
@@ -513,6 +608,7 @@ class HanimeDownloaderApp(QMainWindow):
         # 创建任务显示框
         task_frame = QFrame()
         task_frame.setFrameShape(QFrame.StyledPanel)
+        task_frame.setObjectName(f"task_{time.time()}")  # 为任务框设置唯一标识
         task_layout = QVBoxLayout(task_frame)
 
         task_label = QLabel(f"任务: {url}")
@@ -521,28 +617,45 @@ class HanimeDownloaderApp(QMainWindow):
 
         status_label = QLabel("状态: 等待中")
         status_label.setStyleSheet("color: #f39c12;")
+        status_label.setObjectName("status_label")  # 设置对象名以便后续访问
         task_layout.addWidget(status_label)
 
-        stop_btn = QPushButton("停止任务")
-        task_layout.addWidget(stop_btn)
+        # 按钮布局
+        button_layout = QHBoxLayout()
+
+        pause_btn = QPushButton("暂停")
+        pause_btn.setObjectName("pause_btn")
+        pause_btn.clicked.connect(lambda: self.pause_task(task_frame))  # type: ignore
+        button_layout.addWidget(pause_btn)
+
+        resume_btn = QPushButton("继续")
+        resume_btn.setObjectName("resume_btn")
+        resume_btn.setEnabled(False)  # 初始时不可用
+        resume_btn.clicked.connect(lambda: self.resume_task(task_frame))  # type: ignore
+        button_layout.addWidget(resume_btn)
+
+        stop_btn = QPushButton("停止")
+        stop_btn.setObjectName("stop_btn")
+        stop_btn.clicked.connect(lambda: self.stop_task(task_frame))  # type: ignore
+        button_layout.addWidget(stop_btn)
+
+        task_layout.addLayout(button_layout)
 
         self.tasks_layout.addWidget(task_frame)
 
         # 检查当前活动任务数量
-        active_count = sum(1 for thread in self.active_threads if thread.is_alive())
+        active_count = sum(1 for thread in self.active_threads if
+                           thread.is_alive() and not hasattr(thread, 'paused') or not thread.paused)
 
         if active_count < self.max_concurrent_tasks:
             # 立即启动任务
-            status_label.setText("状态: 运行中")
-            status_label.setStyleSheet("color: #2ecc71;")
-            self.start_download_task(url, task_frame, stop_btn)
+            update_task_status(task_frame, "运行中", "#2ecc71")
+            self.start_download_task(url, task_frame)
         else:
             # 添加到等待队列
             self.pending_tasks.append({
                 "url": url,
-                "frame": task_frame,
-                "status_label": status_label,
-                "stop_btn": stop_btn
+                "frame": task_frame
             })
             self.log_message(f"任务已添加到队列，当前队列位置: {len(self.pending_tasks)}")
             self.update_queue_status()
@@ -550,17 +663,15 @@ class HanimeDownloaderApp(QMainWindow):
         # 更新UI
         self.stop_btn.setEnabled(True)
 
-    def start_download_task(self, url: str, task_frame: QFrame, stop_btn: QPushButton):
+    def start_download_task(self, url: str, task_frame: QFrame):
         """启动下载线程"""
         self.log_message(f"启动新下载任务: {url}")
 
         # 创建新线程
         thread = VideoDownloadThread(url, self.log_emitter)
         thread.daemon = True
+        thread.task_frame = task_frame  # 将任务框与线程关联
         self.active_threads.append(thread)
-
-        # 设置停止按钮功能
-        stop_btn.clicked.connect(lambda: self.stop_thread(thread, task_frame))  # type: ignore
 
         # 启动线程
         thread.start()
@@ -588,15 +699,12 @@ class HanimeDownloaderApp(QMainWindow):
             next_task = self.pending_tasks.pop(0)
             url = next_task["url"]
             task_frame = next_task["frame"]
-            status_label = next_task["status_label"]
-            stop_btn = next_task["stop_btn"]
 
             # 更新状态
-            status_label.setText("状态: 运行中")
-            status_label.setStyleSheet("color: #2ecc71;")
+            update_task_status(task_frame, "运行中", "#2ecc71")
 
             # 启动任务
-            self.start_download_task(url, task_frame, stop_btn)
+            self.start_download_task(url, task_frame)
 
             # 更新队列状态
             self.update_queue_status()
@@ -604,26 +712,55 @@ class HanimeDownloaderApp(QMainWindow):
     def update_queue_status(self):
         """更新队列中任务的状态显示"""
         for i, task in enumerate(self.pending_tasks):
-            task["status_label"].setText(f"状态: 队列中 ({i + 1})")
-            task["status_label"].setStyleSheet("color: #f39c12;")
+            task_frame = task["frame"]
+            update_task_status(task_frame, f"队列中 ({i + 1})", "#f39c12")
 
-    def stop_thread(self, thread: VideoDownloadThread, task_frame: QFrame):
-        """停止单个下载任务"""
-        # 尝试停止线程
-        if hasattr(thread, 'stop'):
-            thread.stop()
+    def pause_task(self, task_frame: QFrame):
+        """暂停任务"""
+        # 找到对应的线程
+        for thread in self.active_threads:
+            if hasattr(thread, 'task_frame') and thread.task_frame == task_frame:
+                thread.pause()
+                update_task_status(task_frame, "已暂停", "#f39c12")
+                self.log_message(f"任务已暂停: {thread.list_url}")
+                break
 
-        # 从活动线程列表中移除
-        if thread in self.active_threads:
-            self.active_threads.remove(thread)
+    def resume_task(self, task_frame: QFrame):
+        """继续任务"""
+        # 找到对应的线程
+        for thread in self.active_threads:
+            if hasattr(thread, 'task_frame') and thread.task_frame == task_frame:
+                thread.resume()
+                update_task_status(task_frame, "运行中", "#2ecc71")
+                self.log_message(f"任务已继续: {thread.list_url}")
+                break
 
-        # 从界面移除任务框
-        task_frame.deleteLater()
+    def stop_task(self, task_frame: QFrame):
+        """停止单个任务"""
+        # 找到对应的线程
+        for thread in self.active_threads:
+            if hasattr(thread, 'task_frame') and thread.task_frame == task_frame:
+                thread.stop()
+                self.log_message(f"任务已停止: {thread.list_url}")
 
-        self.log_message(f"已停止任务: {thread.list_url}")
+                # 从活动线程列表中移除
+                self.active_threads.remove(thread)
 
-        # 立即启动下一个任务
-        self.start_next_task()
+                # 从界面移除任务框
+                task_frame.deleteLater()
+
+                # 如果是当前活动任务，启动下一个任务
+                self.start_next_task()
+                break
+        else:
+            # 如果任务在等待队列中
+            for task in self.pending_tasks:
+                if task["frame"] == task_frame:
+                    self.pending_tasks.remove(task)
+                    self.log_message(f"已从队列中移除任务: {task['url']}")
+                    task_frame.deleteLater()
+                    self.update_queue_status()
+                    break
 
     def stop_all_downloads(self):
         """停止所有下载任务"""
@@ -631,6 +768,7 @@ class HanimeDownloaderApp(QMainWindow):
         for thread in self.active_threads:
             if hasattr(thread, 'stop'):
                 thread.stop()
+                self.log_message(f"已停止任务: {thread.list_url}")
 
         # 清除所有等待任务
         self.pending_tasks.clear()
