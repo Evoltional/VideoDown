@@ -319,11 +319,6 @@ class VideoDownloadThread(threading.Thread):
 
         self.log_message(f"下载任务完成: {self.list_url}")
 
-    def stop(self):
-        """停止下载任务"""
-        self.running = False
-        self.log_message("正在停止下载任务...")
-
 
 class HanimeDownloaderApp(QMainWindow):
     def __init__(self):
@@ -337,7 +332,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.stop_btn = None
         self.download_btn = None
         self.setWindowTitle("Hanime视频下载器")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 800, 1100)
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #2c3e50;
@@ -390,12 +385,19 @@ class HanimeDownloaderApp(QMainWindow):
                 background-color: transparent;
                 border: none;
             }
+            QFrame {
+                background-color: #34495e;
+                border-radius: 5px;
+                padding: 10px;
+            }
         """)
 
         self.active_threads: List[VideoDownloadThread] = []
+        self.pending_tasks: List[dict] = []  # 等待队列
         self.log_emitter = LogEmitter()
         # 添加类型忽略注释解决静态检查问题
         self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
+        self.max_concurrent_tasks = 3  # 最大并发任务数
 
         self.init_ui()
 
@@ -455,6 +457,8 @@ class HanimeDownloaderApp(QMainWindow):
         self.tasks_container = QWidget()
         self.tasks_layout = QVBoxLayout(self.tasks_container)
         self.tasks_layout.setAlignment(Qt.AlignTop)
+        self.tasks_layout.setSpacing(10)
+        self.tasks_layout.setContentsMargins(5, 5, 5, 5)
 
         self.tasks_scroll.setWidget(self.tasks_container)
         tasks_layout.addWidget(self.tasks_scroll)
@@ -480,49 +484,130 @@ class HanimeDownloaderApp(QMainWindow):
 
         self.url_input.clear()
 
-        # 创建新线程
-        thread = VideoDownloadThread(url, self.log_emitter)
-        self.active_threads.append(thread)
-
-        # 添加任务显示
+        # 创建任务显示框
         task_frame = QFrame()
         task_frame.setFrameShape(QFrame.StyledPanel)
-        task_frame.setStyleSheet("background-color: #34495e; border-radius: 5px; padding: 10px;")
         task_layout = QVBoxLayout(task_frame)
 
         task_label = QLabel(f"任务: {url}")
         task_label.setStyleSheet("color: #ecf0f1; font-weight: bold;")
         task_layout.addWidget(task_label)
 
-        status_label = QLabel("状态: 运行中")
-        status_label.setStyleSheet("color: #2ecc71;")
+        status_label = QLabel("状态: 等待中")
+        status_label.setStyleSheet("color: #f39c12;")
         task_layout.addWidget(status_label)
 
         stop_btn = QPushButton("停止任务")
-        # 添加类型忽略注释
-        stop_btn.clicked.connect(lambda: self.stop_thread(thread, task_frame))  # type: ignore
         task_layout.addWidget(stop_btn)
 
         self.tasks_layout.addWidget(task_frame)
 
+        # 检查当前活动任务数量
+        active_count = sum(1 for thread in self.active_threads if thread.is_alive())
+
+        if active_count < self.max_concurrent_tasks:
+            # 立即启动任务
+            status_label.setText("状态: 运行中")
+            status_label.setStyleSheet("color: #2ecc71;")
+            self.start_download_task(url, task_frame, stop_btn)
+        else:
+            # 添加到等待队列
+            self.pending_tasks.append({
+                "url": url,
+                "frame": task_frame,
+                "status_label": status_label,
+                "stop_btn": stop_btn
+            })
+            self.log_message(f"任务已添加到队列，当前队列位置: {len(self.pending_tasks)}")
+            self.update_queue_status()
+
         # 更新UI
         self.stop_btn.setEnabled(True)
+
+    def start_download_task(self, url: str, task_frame: QFrame, stop_btn: QPushButton):
+        """启动下载线程"""
+        self.log_message(f"启动新下载任务: {url}")
+
+        # 创建新线程
+        thread = VideoDownloadThread(url, self.log_emitter)
+        thread.daemon = True
+        self.active_threads.append(thread)
+
+        # 设置停止按钮功能
+        stop_btn.clicked.connect(lambda: self.stop_thread(thread, task_frame))  # type: ignore
 
         # 启动线程
         thread.start()
 
-        self.log_message(f"已启动新下载任务: {url}")
+        # 监控线程完成
+        threading.Thread(target=self.monitor_thread, args=(thread, url, task_frame), daemon=True).start()
 
-    def stop_thread(self, thread: VideoDownloadThread, frame: QFrame):
+    def monitor_thread(self, thread: VideoDownloadThread, url: str, task_frame: QFrame):
+        """监控线程状态并在完成后处理后续任务"""
+        thread.join()
+
+        # 更新UI
+        if thread in self.active_threads:
+            self.active_threads.remove(thread)
+
+        # 从界面移除任务框
+        task_frame.deleteLater()
+
+        # 启动下一个等待任务
+        self.start_next_task()
+
+    def start_next_task(self):
+        """启动下一个等待中的任务"""
+        if self.pending_tasks:
+            next_task = self.pending_tasks.pop(0)
+            url = next_task["url"]
+            task_frame = next_task["frame"]
+            status_label = next_task["status_label"]
+            stop_btn = next_task["stop_btn"]
+
+            # 更新状态
+            status_label.setText("状态: 运行中")
+            status_label.setStyleSheet("color: #2ecc71;")
+
+            # 启动任务
+            self.start_download_task(url, task_frame, stop_btn)
+
+            # 更新队列状态
+            self.update_queue_status()
+
+    def update_queue_status(self):
+        """更新队列中任务的状态显示"""
+        for i, task in enumerate(self.pending_tasks):
+            task["status_label"].setText(f"状态: 队列中 ({i + 1})")
+            task["status_label"].setStyleSheet("color: #f39c12;")
+
+    def stop_thread(self, thread: VideoDownloadThread, task_frame: QFrame):
         """停止单个下载任务"""
-        thread.stop()
-        frame.deleteLater()
+        # 尝试停止线程
+        if hasattr(thread, 'stop'):
+            thread.stop()
+
+        # 从活动线程列表中移除
+        if thread in self.active_threads:
+            self.active_threads.remove(thread)
+
+        # 从界面移除任务框
+        task_frame.deleteLater()
+
         self.log_message(f"已停止任务: {thread.list_url}")
+
+        # 立即启动下一个任务
+        self.start_next_task()
 
     def stop_all_downloads(self):
         """停止所有下载任务"""
+        # 停止所有活动线程
         for thread in self.active_threads:
-            thread.stop()
+            if hasattr(thread, 'stop'):
+                thread.stop()
+
+        # 清除所有等待任务
+        self.pending_tasks.clear()
 
         # 清除所有任务显示
         for i in reversed(range(self.tasks_layout.count())):
@@ -530,13 +615,14 @@ class HanimeDownloaderApp(QMainWindow):
             if widget:
                 widget.deleteLater()
 
-        self.active_threads.clear()
+        # 重置状态
+        self.active_threads = []
         self.stop_btn.setEnabled(False)
         self.log_message("已停止所有下载任务")
 
     def closeEvent(self, event):
         """关闭窗口时停止所有线程"""
-        if self.active_threads:
+        if self.active_threads or self.pending_tasks:
             self.stop_all_downloads()
             time.sleep(1)  # 给线程一点时间停止
         event.accept()
