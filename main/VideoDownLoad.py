@@ -171,11 +171,37 @@ class VideoDownloadThread(threading.Thread):
         return links
 
     def download_video(self, video_url: str) -> bool | None:
-        """下载单个视频"""
+        """下载单个视频，增加失败重试机制"""
         if not self.running:
             return False
 
-        self.log_message(f"正在处理视频: {video_url}")
+        # 重试机制 - 最多3次
+        max_retries = 3
+        retry_count = 0
+        success = False
+
+        while retry_count <= max_retries and not success and self.running:
+            retry_count += 1
+            self.log_message(f"尝试下载视频: {video_url} (尝试 {retry_count}/{max_retries+1})")
+            try:
+                success = self._download_video_attempt(video_url)
+                if not success:
+                    self.log_message(f"第 {retry_count} 次下载失败，稍后重试...")
+                    time.sleep(2 + random.random() * 2)  # 随机延迟避免频繁请求
+            except Exception as e:
+                self.log_message(f"下载过程中发生异常: {str(e)}")
+                time.sleep(3)  # 异常后等待更长时间
+
+        if success:
+            self.log_message(f"成功下载视频: {video_url}")
+        else:
+            self.log_message(f"下载失败: {video_url} (超过最大重试次数)")
+
+        return success
+
+    def _download_video_attempt(self, video_url: str) -> bool:
+        """单个视频下载尝试"""
+        self.log_message(f"处理视频: {video_url}")
         browser = get_browser()
         try:
             # 访问视频页面
@@ -540,9 +566,9 @@ class HanimeDownloaderApp(QMainWindow):
         thread.start()
 
         # 监控线程完成
-        threading.Thread(target=self.monitor_thread, args=(thread, url, task_frame), daemon=True).start()
+        threading.Thread(target=self.monitor_thread, args=(thread, task_frame), daemon=True).start()
 
-    def monitor_thread(self, thread: VideoDownloadThread, url: str, task_frame: QFrame):
+    def monitor_thread(self, thread: VideoDownloadThread, task_frame: QFrame):
         """监控线程状态并在完成后处理后续任务"""
         thread.join()
 
