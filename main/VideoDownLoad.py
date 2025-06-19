@@ -1,13 +1,10 @@
-# 在文件顶部添加类型忽略注释
-# type: ignore
-
 import os
 import random
 import sys
 import threading
 import time
 from typing import Optional, List
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from DrissionPage import ChromiumPage, ChromiumOptions
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
@@ -139,6 +136,7 @@ class VideoDownloadThread(threading.Thread):
         self.log_emitter = log_emitter
         self.download_dir = "downloads"
         self.running = True
+        self.max_workers = 3  # 同时下载的最大视频数
         os.makedirs(self.download_dir, exist_ok=True)
 
     def log_message(self, message: str):
@@ -288,24 +286,36 @@ class VideoDownloadThread(threading.Thread):
 
         self.log_message(f"找到 {len(video_links)} 个视频")
 
-        # 下载每个视频
-        for i, link in enumerate(video_links):
-            if not self.running:
-                self.log_message("下载任务已取消")
-                return
-            if 'search?query' in link:
-                self.log_message(f"链接: {link} 不是视频链接")
-                continue
+        # 使用线程池并发下载视频
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # 创建下载任务
+            futures = []
+            for i, link in enumerate(video_links):
+                if not self.running:
+                    self.log_message("下载任务已取消")
+                    break
+                if 'search?query' in link:
+                    self.log_message(f"链接: {link} 不是视频链接")
+                    continue
 
-            self.log_message(f"正在下载视频 {i + 1}/{len(video_links)}")
-            success = self.download_video(link)
-            if success:
-                self.log_message(f"视频 {i + 1} 下载成功")
-            else:
-                self.log_message(f"视频 {i + 1} 下载失败")
+                self.log_message(f"提交下载任务: 视频 {i + 1}/{len(video_links)}")
+                future = executor.submit(self.download_video, link)
+                futures.append(future)
+                # 添加随机延迟避免请求过于密集
+                time.sleep(random.uniform(0.5, 1.5))
 
-            # 在视频之间添加随机延迟
-            time.sleep(random.uniform(1, 3))
+            # 等待所有任务完成
+            for i, future in enumerate(as_completed(futures)):
+                if not self.running:
+                    break
+                try:
+                    success = future.result()
+                    if success:
+                        self.log_message(f"视频 {i + 1} 下载成功")
+                    else:
+                        self.log_message(f"视频 {i + 1} 下载失败")
+                except Exception as e:
+                    self.log_message(f"视频下载出错: {str(e)}")
 
         self.log_message(f"下载任务完成: {self.list_url}")
 
