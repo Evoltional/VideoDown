@@ -99,7 +99,12 @@ class CloudflareByPasser:
             self.click_verification_button()
 
             try_count += 1
-            time.sleep(2 + random.random() * 2)
+            # 使用条件等待替代固定等待
+            start_time = time.time()
+            while time.time() - start_time < 10:  # 最多等待10秒
+                if self.is_bypassed():
+                    break
+                time.sleep(0.5)  # 每0.5秒检查一次
 
         if self.is_bypassed():
             self.log_message("成功绕过Cloudflare验证")
@@ -117,6 +122,7 @@ def get_browser():
     options.set_argument('--disable-dev-shm-usage')
     options.set_argument('--disable-blink-features=AutomationControlled')
     options.set_argument('--disable-infobars')
+    options.set_argument('--headless=new')  # 启用无头模式
 
     # 设置用户代理
     user_agents = [
@@ -179,25 +185,31 @@ class VideoDownloadThread(threading.Thread):
         links: List[str] = []
         try:
             browser.get(self.list_url)
-            time.sleep(3)
 
-            # 检查是否被暂停
-            self.wait_if_paused()
-            if not self.running:
+            # 使用条件等待替代固定等待
+            start_time = time.time()
+            while time.time() - start_time < 30:  # 最多等待30秒
+                # 检查是否被暂停
+                self.wait_if_paused()
+                if not self.running:
+                    return None
+
+                # 检查播放列表是否已加载
+                playlist = browser.ele('#playlist-scroll', timeout=1)
+                if playlist:
+                    break
+                time.sleep(1)  # 每1秒检查一次
+            else:
+                self.log_message("等待播放列表加载超时")
                 return None
 
-            # 等待播放列表加载
-            playlist = browser.ele('#playlist-scroll', timeout=30)
-            if not playlist:
-                self.log_message("未找到播放列表元素")
-            else:
-                # 获取所有视频链接
-                link_elements = playlist.eles('tag:a', timeout=10)
-                if link_elements:
-                    links = [a.attr('href') for a in link_elements if a.attr('href')]
-                    unique_links = list(set(links))
-                    self.log_message(f"找到 {len(unique_links)} 个唯一视频")
-                    links = unique_links
+            # 获取所有视频链接
+            link_elements = playlist.eles('tag:a', timeout=10)
+            if link_elements:
+                links = [a.attr('href') for a in link_elements if a.attr('href')]
+                unique_links = list(set(links))
+                self.log_message(f"找到 {len(unique_links)} 个唯一视频")
+                links = unique_links
         except Exception as e:
             self.log_message(f"获取视频链接时出错: {str(e)}")
         finally:
@@ -241,17 +253,22 @@ class VideoDownloadThread(threading.Thread):
         try:
             # 访问视频页面
             browser.get(video_url)
-            time.sleep(2)
 
-            # 检查是否被暂停或停止
-            self.wait_if_paused()
-            if not self.running:
-                return False
+            # 使用条件等待替代固定等待
+            start_time = time.time()
+            while time.time() - start_time < 20:  # 最多等待20秒
+                # 检查是否被暂停或停止
+                self.wait_if_paused()
+                if not self.running:
+                    return False
 
-            # 获取下载按钮链接
-            download_btn = browser.ele('#downloadBtn', timeout=10)
-            if not download_btn:
-                self.log_message("未找到下载按钮")
+                # 检查下载按钮是否已加载
+                download_btn = browser.ele('#downloadBtn', timeout=1)
+                if download_btn:
+                    break
+                time.sleep(1)  # 每1秒检查一次
+            else:
+                self.log_message("等待下载按钮加载超时")
                 return False
 
             download_page_url = download_btn.attr('href')
@@ -263,24 +280,21 @@ class VideoDownloadThread(threading.Thread):
 
             # 访问下载页面
             browser.get(download_page_url)
-            time.sleep(3)
 
-            # 检查是否被暂停或停止
-            self.wait_if_paused()
-            if not self.running:
-                return False
+            # 使用条件等待替代固定等待
+            start_time = time.time()
+            while time.time() - start_time < 30:  # 最多等待30秒
+                # 检查是否被暂停或停止
+                self.wait_if_paused()
+                if not self.running:
+                    return False
 
-            # 绕过Cloudflare验证
-            cf_bypasser = CloudflareByPasser(browser, log_emitter=self.log_emitter)
-            if not cf_bypasser.bypass():
-                self.log_message("Cloudflare验证绕过失败")
-                return False
-
-            time.sleep(3)
-
-            # 检查是否被暂停或停止
-            self.wait_if_paused()
-            if not self.running:
+                # 检查Cloudflare验证是否已完成
+                if "just a moment" not in browser.title.lower():
+                    break
+                time.sleep(1)  # 每1秒检查一次
+            else:
+                self.log_message("等待Cloudflare验证完成超时")
                 return False
 
             # 定位下载链接
