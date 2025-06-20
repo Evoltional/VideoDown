@@ -527,7 +527,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_emitter = LogEmitter()
         # 添加类型忽略注释解决静态检查问题
         self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
-        self.max_concurrent_tasks = 3  # 最大并发任务数
+        self.max_concurrent_tasks = 4  # 最大并发任务数
 
         self.init_ui()
 
