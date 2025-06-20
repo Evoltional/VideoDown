@@ -235,6 +235,7 @@ class VideoDownloadThread(threading.Thread):
 
     def _download_video_attempt(self, video_url: str) -> bool:
         """单个视频下载尝试"""
+        result = ''
         self.log_message(f"处理视频: {video_url}")
         browser = get_browser()
         try:
@@ -305,12 +306,16 @@ class VideoDownloadThread(threading.Thread):
             self.log_message(f"正在下载: {filename}")
 
             # 下载视频
-            return self.save_video(video_url, filename)
+            result = self.save_video(video_url, filename)  # 确保赋值
         except Exception as e:
             self.log_message(f"处理视频时出错: {str(e)}")
-            return False
+            result = False
         finally:
-            browser.quit()
+            try:
+                browser.quit()  # 安全关闭浏览器
+            except Exception as e:
+                self.log_message(f"关闭浏览器时出错: {str(e)}")
+            return result  # 显式返回结果
 
     def save_video(self, url: str, filename: str) -> bool:
         """保存视频文件"""
@@ -381,7 +386,7 @@ class VideoDownloadThread(threading.Thread):
                     break
 
                 if 'search?query' in link:
-                    self.log_message(f"链接: {link} 不是视频链接")
+                    self.log_message(f"链接: {link} 不是视频链接，跳过")
                     continue
 
                 self.log_message(f"提交下载任务: 视频 {i + 1}/{len(video_links)}")
@@ -510,6 +515,10 @@ class HanimeDownloaderApp(QMainWindow):
                 background-color: #34495e;
                 border-radius: 5px;
                 padding: 10px;
+                border: 1px solid #3498db;
+            }
+            #tasks_container {
+                background-color: #2c3e50;
             }
         """)
 
@@ -543,7 +552,7 @@ class HanimeDownloaderApp(QMainWindow):
         input_layout = QVBoxLayout(input_group)
 
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("例如: https://hanime1.me/watch?v=22602&list=1866")
+        self.url_input.setPlaceholderText("例如: https://hanime1.me/watch?v=????")
         input_layout.addWidget(self.url_input)
 
         button_layout = QHBoxLayout()
@@ -576,6 +585,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.tasks_scroll = QScrollArea()
         self.tasks_scroll.setWidgetResizable(True)
         self.tasks_container = QWidget()
+        self.tasks_container.setObjectName("tasks_container")  # 添加对象名以便样式表选择
         self.tasks_layout = QVBoxLayout(self.tasks_container)
         self.tasks_layout.setAlignment(Qt.AlignTop)
         self.tasks_layout.setSpacing(10)
