@@ -145,7 +145,7 @@ class VideoDownloadThread(threading.Thread):
         self.running = True
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
-        self.max_workers = 3  # 同时下载的最大视频数
+        self.max_workers = 2  # 同时下载的最大视频数
         os.makedirs(self.download_dir, exist_ok=True)
 
     def log_message(self, message: str):
@@ -213,7 +213,10 @@ class VideoDownloadThread(threading.Thread):
         except Exception as e:
             self.log_message(f"获取视频链接时出错: {str(e)}")
         finally:
-            browser.quit()
+            try:
+                browser.quit()
+            except:
+                pass
         return links
 
     def download_video(self, video_url: str) -> bool | None:
@@ -247,7 +250,7 @@ class VideoDownloadThread(threading.Thread):
 
     def _download_video_attempt(self, video_url: str) -> bool:
         """单个视频下载尝试"""
-        result = ''
+        result = False
         self.log_message(f"处理视频: {video_url}")
         browser = get_browser()
         try:
@@ -333,6 +336,7 @@ class VideoDownloadThread(threading.Thread):
 
     def save_video(self, url: str, filename: str) -> bool:
         """保存视频文件"""
+        filepath=''
         if not self.running:
             return False
 
@@ -351,6 +355,7 @@ class VideoDownloadThread(threading.Thread):
             filepath = os.path.join(self.download_dir, filename)
             total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
+            last_percent = -1  # 记录上次报告的百分比
 
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -368,12 +373,18 @@ class VideoDownloadThread(threading.Thread):
                         downloaded += len(chunk)
                         if total_size > 0:
                             percent = (downloaded / total_size) * 100
-                            self.log_message(f"下载进度: {filename} - {percent:.1f}%")
+                            # 仅当百分比变化超过1%时才更新
+                            if abs(percent - last_percent) > 1 or percent == 100:
+                                self.log_message(f"下载进度: {filename} - {percent:.1f}%")
+                                last_percent = percent
 
             self.log_message(f"成功保存: {filepath}")
             return True
         except Exception as e:
             self.log_message(f"下载失败: {str(e)}")
+            # 删除部分下载的文件
+            if os.path.exists(filepath):
+                os.remove(filepath)
             return False
 
     def run(self):
@@ -541,7 +552,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_emitter = LogEmitter()
         # 添加类型忽略注释解决静态检查问题
         self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
-        self.max_concurrent_tasks = 4  # 最大并发任务数
+        self.max_concurrent_tasks = 2  # 最大并发任务数
 
         self.init_ui()
 
@@ -705,7 +716,14 @@ class HanimeDownloaderApp(QMainWindow):
 
     def monitor_thread(self, thread: VideoDownloadThread, task_frame: QFrame):
         """监控线程状态并在完成后处理后续任务"""
-        thread.join()
+        # 使用超时机制避免永久阻塞
+        start_time = time.time()
+        while thread.is_alive() and time.time() - start_time < 1800:  # 30分钟超时
+            time.sleep(1)
+
+        if thread.is_alive():
+            self.log_message(f"任务超时: {thread.list_url}")
+            thread.stop()
 
         # 更新UI
         if thread in self.active_threads:
