@@ -25,7 +25,7 @@
 
 ## 运行方法
 
-```bash
+```
 python VideoDownLoad.py
 ```
 
@@ -38,11 +38,6 @@ python VideoDownLoad.py
 
 点击开始下载
 
-### 打包应用
-
-```bash
-pyinstaller VideoDownLoad.py
-```
 
 ### 补充
 批量下载后推荐使用 [Organize](https://github.com/Evoltional/Organize) 对文件进行整理
