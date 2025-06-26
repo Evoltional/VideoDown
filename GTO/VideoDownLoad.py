@@ -1,8 +1,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication
 
-from GTO.ToolPart.gui import HanimeDownloaderApp
-
+from GTO.ToolPart.GUI import HanimeDownloaderApp
 
 def main():
     app = QApplication(sys.argv)

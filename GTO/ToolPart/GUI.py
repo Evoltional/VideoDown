@@ -1,14 +1,17 @@
 import threading
 import time
+import os
+import configparser
 from typing import List
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox, QScrollArea, QFrame)
+                             QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
+                             QScrollArea, QFrame, QFileDialog)
 
-from GTO.ToolPart.downloader import VideoDownloadThread
-from GTO.ToolPart.utils import LogEmitter
+from GTO.ToolPart.DownloadThread import VideoDownloadThread
+from GTO.ToolPart.Logger import LogEmitter
 
 
 def update_task_status(task_frame: QFrame, status: str, color: str):
@@ -44,6 +47,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.url_input = None
         self.stop_btn = None
         self.download_btn = None
+        self.download_path_label = None
         self.setWindowTitle("Hanime视频下载器")
         self.setGeometry(100, 100, 800, 1100)
         self.setStyleSheet("""
@@ -120,7 +124,31 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
         self.max_concurrent_tasks = 2  # 最大并发任务数
 
+        # 加载配置文件
+        self.config = configparser.ConfigParser()
+        self.config_file = "./config.ini"
+        self.download_dir = self.load_config()
+
         self.init_ui()
+
+    def load_config(self) -> str:
+        """加载配置文件，返回下载路径"""
+        default_dir = os.path.join(os.getcwd(), "downloads")  # 默认下载路径为当前目录下的downloads文件夹
+
+        # 如果配置文件存在，读取配置
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file, encoding='utf-8')
+            return self.config.get('Settings', 'DownloadDir', fallback=default_dir)
+
+        # 如果配置文件不存在，创建默认配置
+        os.makedirs(default_dir, exist_ok=True)
+        return default_dir
+
+    def save_config(self):
+        """保存配置到文件"""
+        self.config['Settings'] = {'DownloadDir': self.download_dir}
+        with open(self.config_file, 'w', encoding='utf-8') as configfile:
+            self.config.write(configfile) # type: ignore
 
     def init_ui(self):
         """初始化用户界面"""
@@ -137,6 +165,23 @@ class HanimeDownloaderApp(QMainWindow):
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setStyleSheet("color: #3498db; margin-bottom: 20px;")
         main_layout.addWidget(title_label)
+
+        # 下载路径设置区域
+        path_group = QGroupBox("下载路径设置")
+        path_layout = QVBoxLayout(path_group)
+
+        # 路径显示和选择按钮
+        path_control_layout = QHBoxLayout()
+        self.download_path_label = QLabel(f"当前下载路径: {self.download_dir}")
+        self.download_path_label.setStyleSheet("color: #ecf0f1;")
+        path_control_layout.addWidget(self.download_path_label)
+
+        change_path_btn = QPushButton("更改路径")
+        change_path_btn.clicked.connect(self.change_download_path)  # type: ignore
+        path_control_layout.addWidget(change_path_btn)
+
+        path_layout.addLayout(path_control_layout)
+        main_layout.addWidget(path_group)
 
         # 输入区域
         input_group = QGroupBox("输入视频列表链接")
@@ -190,6 +235,21 @@ class HanimeDownloaderApp(QMainWindow):
         # 状态栏
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("就绪")
+
+    def change_download_path(self):
+        """更改下载路径"""
+        new_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择下载目录",
+            self.download_dir,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+
+        if new_path:
+            self.download_dir = new_path
+            self.download_path_label.setText(f"当前下载路径: {self.download_dir}")
+            self.save_config()
+            self.log_message(f"下载路径已更新为: {self.download_dir}")
 
     def log_message(self, message: str):
         """添加消息到日志区域"""
@@ -267,9 +327,10 @@ class HanimeDownloaderApp(QMainWindow):
     def start_download_task(self, url: str, task_frame: QFrame):
         """启动下载线程"""
         self.log_message(f"启动新下载任务: {url}")
+        self.log_message(f"下载路径: {self.download_dir}")
 
         # 创建新线程
-        thread = VideoDownloadThread(url, self.log_emitter)
+        thread = VideoDownloadThread(url, self.download_dir, self.log_emitter)
         thread.daemon = True
         thread.task_frame = task_frame  # 将任务框与线程关联
         self.active_threads.append(thread)
