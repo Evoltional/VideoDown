@@ -2,6 +2,7 @@ import threading
 import time
 import os
 import configparser
+import uuid  # 新增：导入uuid模块
 from typing import List
 
 from PyQt5.QtCore import Qt
@@ -148,7 +149,7 @@ class HanimeDownloaderApp(QMainWindow):
         """保存配置到文件"""
         self.config['Settings'] = {'DownloadDir': self.download_dir}
         with open(self.config_file, 'w', encoding='utf-8') as configfile:
-            self.config.write(configfile) # type: ignore
+            self.config.write(configfile)  # type: ignore
 
     def init_ui(self):
         """初始化用户界面"""
@@ -253,9 +254,31 @@ class HanimeDownloaderApp(QMainWindow):
 
     def log_message(self, message: str):
         """添加消息到日志区域"""
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.log_area.append(f"[{timestamp}] {message}")
+        # 检查是否是标题更新消息
+        if message.startswith("[TITLE_UPDATE]|||"):
+            parts = message.split("|||")
+            if len(parts) >= 3:
+                task_id = parts[1]
+                playlist_title = parts[2]
+                self.update_task_title(task_id, playlist_title)
+            else:
+                # 正常记录日志
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                self.log_area.append(f"[{timestamp}] {message}")
+        else:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.log_area.append(f"[{timestamp}] {message}")
         self.log_area.verticalScrollBar().setValue(self.log_area.verticalScrollBar().maximum())
+
+    def update_task_title(self, task_id: str, playlist_title: str):
+        """更新任务标题显示播放列表名称"""
+        task_frame = self.findChild(QFrame, task_id)
+        if task_frame:
+            # 获取之前存储的URL
+            url = getattr(task_frame, 'url', '未知URL')
+            task_label = task_frame.findChild(QLabel)
+            if task_label:
+                task_label.setText(f"任务: {url}  {playlist_title}")
 
     def start_download(self):
         """开始新的下载任务"""
@@ -269,9 +292,12 @@ class HanimeDownloaderApp(QMainWindow):
         # 创建任务显示框
         task_frame = QFrame()
         task_frame.setFrameShape(QFrame.StyledPanel)
-        task_frame.setObjectName(f"task_{time.time()}")  # 为任务框设置唯一标识
+        task_id = str(uuid.uuid4())  # 生成唯一任务ID
+        task_frame.setObjectName(task_id)
+        task_frame.url = url  # 存储URL
         task_layout = QVBoxLayout(task_frame)
 
+        # 初始显示URL，稍后更新为播放列表名称
         task_label = QLabel(f"任务: {url}")
         task_label.setStyleSheet("color: #ecf0f1; font-weight: bold;")
         task_layout.addWidget(task_label)
@@ -311,12 +337,13 @@ class HanimeDownloaderApp(QMainWindow):
         if active_count < self.max_concurrent_tasks:
             # 立即启动任务
             update_task_status(task_frame, "运行中", "#2ecc71")
-            self.start_download_task(url, task_frame)
+            self.start_download_task(url, task_frame, task_id)  # 传递task_id
         else:
             # 添加到等待队列
             self.pending_tasks.append({
                 "url": url,
-                "frame": task_frame
+                "frame": task_frame,
+                "task_id": task_id  # 存储task_id
             })
             self.log_message(f"任务已添加到队列，当前队列位置: {len(self.pending_tasks)}")
             self.update_queue_status()
@@ -324,7 +351,7 @@ class HanimeDownloaderApp(QMainWindow):
         # 更新UI
         self.stop_btn.setEnabled(True)
 
-    def start_download_task(self, url: str, task_frame: QFrame):
+    def start_download_task(self, url: str, task_frame: QFrame, task_id: str):
         """启动下载线程"""
         self.log_message(f"启动新下载任务: {url}")
         self.log_message(f"下载路径: {self.download_dir}")
@@ -333,6 +360,7 @@ class HanimeDownloaderApp(QMainWindow):
         thread = VideoDownloadThread(url, self.download_dir, self.log_emitter)
         thread.daemon = True
         thread.task_frame = task_frame  # 将任务框与线程关联
+        thread.task_id = task_id  # 传递任务ID
         self.active_threads.append(thread)
 
         # 启动线程
@@ -368,12 +396,13 @@ class HanimeDownloaderApp(QMainWindow):
             next_task = self.pending_tasks.pop(0)
             url = next_task["url"]
             task_frame = next_task["frame"]
+            task_id = next_task["task_id"]
 
             # 更新状态
             update_task_status(task_frame, "运行中", "#2ecc71")
 
             # 启动任务
-            self.start_download_task(url, task_frame)
+            self.start_download_task(url, task_frame, task_id)
 
             # 更新队列状态
             self.update_queue_status()

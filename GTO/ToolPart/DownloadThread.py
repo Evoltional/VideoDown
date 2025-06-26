@@ -13,6 +13,7 @@ class VideoDownloadThread(threading.Thread):
     def __init__(self, list_url: str, download_dir: str, log_emitter: Optional[LogEmitter] = None):
         super().__init__()
         self.task_frame = None
+        self.task_id = None  # 新增：任务ID
         self.list_url = list_url
         self.log_emitter = log_emitter
         self.download_dir = download_dir  # 使用传入的下载路径
@@ -55,11 +56,12 @@ class VideoDownloadThread(threading.Thread):
             while self.paused:
                 self.pause_cond.wait()
 
-    def get_video_links(self) -> list[str] | None:
-        """获取列表页中的所有视频链接"""
+    def get_video_links(self) -> tuple[list[str] | None, str | None]:
+        """获取列表页中的所有视频链接和播放列表标题"""
         self.log_message(f"正在从 {self.list_url} 获取视频列表...")
         browser = None
         links: List[str] = []
+        playlist_title = ""
         try:
             browser = get_browser()
             browser.get(self.list_url)
@@ -70,7 +72,7 @@ class VideoDownloadThread(threading.Thread):
                 # 检查是否被暂停
                 self.wait_if_paused()
                 if not self.running:
-                    return None
+                    return None, None
 
                 # 检查播放列表是否已加载
                 playlist = browser.ele('#playlist-scroll', timeout=1)
@@ -79,7 +81,22 @@ class VideoDownloadThread(threading.Thread):
                 time.sleep(1)  # 每1秒检查一次
             else:
                 self.log_message("等待播放列表加载超时")
-                return None
+                return None, None
+
+            # 获取播放列表标题
+            try:
+                title_element = browser.ele('xpath://*[@id="video-playlist-wrapper"]/div[1]/h4[1]', timeout=5)
+                if title_element:
+                    playlist_title = title_element.text.strip()
+                    self.log_message(f"播放列表标题: {playlist_title}")
+
+                    # 发送特殊消息更新UI中的任务标题
+                    if hasattr(self, 'task_id'):
+                        self.log_message(f"[TITLE_UPDATE]|||{self.task_id}|||{playlist_title}")
+                else:
+                    self.log_message("未找到播放列表标题")
+            except Exception as e:
+                self.log_message(f"获取播放列表标题时出错: {str(e)}")
 
             # 获取所有视频链接
             link_elements = playlist.eles('tag:a', timeout=10)
@@ -96,7 +113,7 @@ class VideoDownloadThread(threading.Thread):
                     browser.quit()
                 except Exception as e:
                     self.log_message(f"关闭浏览器时出错: {str(e)}")
-        return links
+        return links, playlist_title
 
     def download_video(self, video_url: str) -> bool | None:
         """下载单个视频，增加失败重试机制"""
@@ -272,7 +289,7 @@ class VideoDownloadThread(threading.Thread):
     def run(self):
         """运行下载任务"""
         self.log_message(f"开始下载任务: {self.list_url}")
-        video_links = self.get_video_links()
+        video_links, playlist_title = self.get_video_links()
 
         if not video_links:
             self.log_message("未找到视频链接")
