@@ -11,8 +11,8 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
                              QScrollArea, QFrame, QFileDialog)
 
-from GTO.ToolPart.DownloadThread import VideoDownloadThread
-from GTO.ToolPart.Logger import LogEmitter
+from ToolPart.DownloadThread import VideoDownloadThread
+from ToolPart.Logger import LogEmitter
 
 
 def update_task_status(task_frame: QFrame, status: str, color: str):

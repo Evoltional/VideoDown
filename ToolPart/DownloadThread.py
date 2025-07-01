@@ -5,8 +5,9 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List
-from .Browser import get_browser
-from GTO.ToolPart.Logger import LogEmitter, log_failure
+
+from ToolPart.Browser import get_browser
+from ToolPart.Logger import LogEmitter, log_failure
 
 
 class VideoDownloadThread(threading.Thread):

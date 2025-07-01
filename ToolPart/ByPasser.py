@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from GTO.ToolPart.Logger import LogEmitter
+from ToolPart.Logger import LogEmitter
 
 
 class CloudflareByPasser:
