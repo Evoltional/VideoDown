@@ -2,10 +2,9 @@ import os
 import random
 import threading
 import time
-import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List
-
+from typing import Optional
+import requests
 from ToolPart.Browser import get_browser
 from ToolPart.Logger import LogEmitter, log_failure
 
@@ -57,12 +56,12 @@ class VideoDownloadThread(threading.Thread):
             while self.paused:
                 self.pause_cond.wait()
 
-    def get_video_links(self) -> tuple[list[str] | None, str | None]:
+    def get_video_links(self) -> tuple[list[str] | None, str | None] | None:
         """获取列表页中的所有视频链接和播放列表标题"""
         self.log_message(f"正在从 {self.list_url} 获取视频列表...")
         browser = None
-        links: List[str] = []
-        playlist_title = ""
+        links: list[str] | None = None  # 修改1: 初始化为None
+        playlist_title: str | None = None  # 修改2: 初始化为None
         try:
             browser = get_browser()
             browser.get(self.list_url)
@@ -102,19 +101,20 @@ class VideoDownloadThread(threading.Thread):
             # 获取所有视频链接
             link_elements = playlist.eles('tag:a', timeout=10)
             if link_elements:
-                links = [a.attr('href') for a in link_elements if a.attr('href')]
-                unique_links = list(set(links))
+                found_links = [a.attr('href') for a in link_elements if a.attr('href')]
+                unique_links = list(set(found_links))
                 self.log_message(f"找到 {len(unique_links)} 个唯一视频")
                 links = unique_links
         except Exception as e:
             self.log_message(f"获取视频链接时出错: {str(e)}")
+            links, playlist_title = None, None  # 修改3: 出错时返回None
         finally:
             if browser:
                 try:
                     browser.quit()
                 except Exception as e:
                     self.log_message(f"关闭浏览器时出错: {str(e)}")
-        return links, playlist_title
+        return links, playlist_title  # 类型现在符合声明
 
     def download_video(self, video_url: str) -> bool | None:
         """下载单个视频，增加失败重试机制"""
