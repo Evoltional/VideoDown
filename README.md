@@ -29,6 +29,11 @@
 python VideoDownLoad.py
 ```
 
+## 打包程序方法
+```
+pyinstaller --onefile --windowed .\VideoDownLoad.py .\ToolPart\Browser.py .\ToolPart\ByPasser.py .\ToolPart\DownloadThread.py .\ToolPart\GUI.py .\ToolPart\Logger.py 
+```
+
 ## 使用说明
 需确保网络能访问对应链接
 
