@@ -266,6 +266,13 @@ class VideoDownloadThread(threading.Thread):
             filename = self.sanitize_filename(raw_filename)
             self.log_message(f"原始文件名: {raw_filename} -> 清洗后: {filename}")
 
+            # 检查文件是否已存在
+            filepath = os.path.join(self.download_dir, filename)
+            if os.path.exists(filepath) and os.path.isfile(filepath):
+                self.log_message(f"文件已存在，跳过下载: {filename}")
+                return True, "文件已存在，跳过下载", filename
+            # =====================
+
             if not video_download_url or not filename:
                 error_msg = "未找到下载URL或文件名"
                 self.log_message(error_msg)
@@ -300,6 +307,11 @@ class VideoDownloadThread(threading.Thread):
                 'Referer': 'https://hanime1.me/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
+
+            # 最终检查（防止并发场景）
+            if os.path.exists(filepath) and os.path.isfile(filepath):
+                self.log_message(f"文件已存在，跳过下载: {clean_filename}")
+                return True, "文件已存在，跳过下载"
 
             # 创建会话
             session = requests.Session()
