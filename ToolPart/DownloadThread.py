@@ -366,6 +366,9 @@ class VideoDownloadThread(threading.Thread):
 
         self.log_message(f"找到 {len(video_links)} 个视频")
 
+        # 用于收集失败的任务
+        failed_downloads = []
+
         # 使用线程池并发下载视频
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # 创建下载任务
@@ -407,7 +410,16 @@ class VideoDownloadThread(threading.Thread):
                         self.log_message(f"视频 {i + 1} 下载成功")
                     else:
                         self.log_message(f"视频 {i + 1} 下载失败")
+                        # 记录失败的任务
+                        failed_downloads.append(video_links[i])
                 except Exception as e:
                     self.log_message(f"视频下载出错: {str(e)}")
+                    # 记录失败的任务
+                    failed_downloads.append(video_links[i])
+
+        # 如果有失败的任务，发送特殊格式的消息
+        if failed_downloads and self.running:
+            failed_urls = "|||".join(failed_downloads)
+            self.log_message(f"[FAILED_TASKS]|||{self.task_id}|||{failed_urls}")
 
         self.log_message(f"下载任务完成: {self.list_url}")
