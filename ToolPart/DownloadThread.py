@@ -29,16 +29,11 @@ class VideoDownloadThread(threading.Thread):
 
         # 定义非法字符的正则表达式模式
         self.illegal_chars_pattern = re.compile(r'[\\/*?:"<>|]')
-        # 定义需要替换的空白字符
-        self.whitespace_chars = re.compile(r'\s+')
 
     def sanitize_filename(self, filename: str) -> str:
         """清洗文件名，移除非法字符"""
         # 移除非法字符
         clean_name = self.illegal_chars_pattern.sub('_', filename)
-
-        # 替换连续空白为单个下划线
-        clean_name = self.whitespace_chars.sub('_', clean_name)
 
         # 移除开头和结尾的空白
         clean_name = clean_name.strip()
