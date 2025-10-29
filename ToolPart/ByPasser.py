@@ -5,7 +5,7 @@ from ToolPart.Logger import LogEmitter
 
 
 class CloudflareByPasser:
-    def __init__(self, driver, max_retries=-1, log_emitter: Optional[LogEmitter] = None):
+    def __init__(self, driver, max_retries: int = -1, log_emitter: Optional[LogEmitter] = None):
         self.driver = driver
         self.max_retries = max_retries
         self.log_emitter = log_emitter
@@ -52,11 +52,11 @@ class CloudflareByPasser:
                 button = self.search_recursively_shadow_root_with_cf_input(iframe("tag:body"))
             return button
 
-    def log_message(self, message):
+    def log_message(self, message: str) -> None:
         if self.log_emitter and hasattr(self.log_emitter, 'log_signal'):
             self.log_emitter.log_signal.emit(message)  # type: ignore
 
-    def click_verification_button(self):
+    def click_verification_button(self) -> None:
         try:
             button = self.locate_cf_button()
             if button:
@@ -67,7 +67,7 @@ class CloudflareByPasser:
         except Exception as e:
             self.log_message(f"点击验证按钮时出错: {e}")
 
-    def is_bypassed(self):
+    def is_bypassed(self) -> bool:
         try:
             title = self.driver.title.lower()
             return "just a moment" not in title
@@ -75,7 +75,7 @@ class CloudflareByPasser:
             self.log_message(f"检查页面标题时出错: {e}")
             return False
 
-    def bypass(self):
+    def bypass(self) -> bool:
         try_count = 0
         while not self.is_bypassed():
             if 0 < self.max_retries + 1 <= try_count:
@@ -86,12 +86,11 @@ class CloudflareByPasser:
             self.click_verification_button()
 
             try_count += 1
-            # 使用条件等待替代固定等待
             start_time = time.time()
-            while time.time() - start_time < 10:  # 最多等待10秒
+            while time.time() - start_time < 10:
                 if self.is_bypassed():
                     break
-                time.sleep(0.5)  # 每0.5秒检查一次
+                time.sleep(0.5)
 
         if self.is_bypassed():
             self.log_message("成功绕过Cloudflare验证")

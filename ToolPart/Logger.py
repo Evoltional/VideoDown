@@ -1,11 +1,12 @@
 import os
 import time
+from typing import Optional
 from PyQt5.QtCore import pyqtSignal, QObject
 
 class LogEmitter(QObject):
     log_signal = pyqtSignal(str)  # type: ignore
 
-def log_failure(logger_dir: str, filename: str, url: str, error: str = ""):
+def log_failure(logger_dir: str, filename: str, url: str, error: str = "") -> Optional[str]:
     """记录下载失败到日志文件"""
     try:
         # 创建日志文件路径（按日期）
