@@ -7,23 +7,27 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Tuple
 import requests
 from PyQt5.QtWidgets import QFrame
+from PyQt5.QtCore import QThread, pyqtSignal
 
 from ToolPart.Browser import get_browser
 from ToolPart.Logger import LogEmitter, log_failure
 
 
-class VideoDownloadThread(threading.Thread):
-    def __init__(self, list_url: str, download_dir: str, log_emitter: Optional[LogEmitter] = None):
+class VideoDownloadThread(QThread):
+    # 定义信号
+    log_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(str, float)
+    finished_signal = pyqtSignal(str, list)  # task_id, failed_urls
+
+    def __init__(self, list_url: str, download_dir: str, task_id: str):
         super().__init__()
-        self.task_frame: Optional[QFrame] = None
-        self.task_id: Optional[str] = None
         self.list_url = list_url
-        self.log_emitter = log_emitter
         self.download_dir = download_dir
+        self.task_id = task_id
         self.running = True
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
-        self.max_workers = 2
+        self.max_workers = 2  # 减少并发数，避免资源冲突
         os.makedirs(self.download_dir, exist_ok=True)
 
         # 确保日志目录存在
@@ -50,8 +54,8 @@ class VideoDownloadThread(threading.Thread):
         return clean_name
 
     def log_message(self, message: str) -> None:
-        if self.log_emitter and hasattr(self.log_emitter, 'log_signal'):
-            self.log_emitter.log_signal.emit(message)  # type: ignore
+        """通过信号发送日志消息"""
+        self.log_signal.emit(message)
 
     def pause(self) -> None:
         """暂停下载任务"""
@@ -112,9 +116,6 @@ class VideoDownloadThread(threading.Thread):
                 if title_element:
                     playlist_title = title_element.text.strip()
                     self.log_message(f"播放列表标题: {playlist_title}")
-
-                    if hasattr(self, 'task_id'):
-                        self.log_message(f"[TITLE_UPDATE]|||{self.task_id}|||{playlist_title}")
                 else:
                     self.log_message("未找到播放列表标题")
             except Exception as e:
@@ -145,7 +146,7 @@ class VideoDownloadThread(threading.Thread):
         if not self.running:
             return False
 
-        max_retries = 3
+        max_retries = 2  # 减少重试次数
         retry_count = 0
         success = False
         last_error = ""
@@ -158,14 +159,15 @@ class VideoDownloadThread(threading.Thread):
                 success, error, file = self._download_video_attempt(video_url)
                 if not success:
                     last_error = error
-                    self.log_message(f"第 {retry_count} 次下载失败，稍后重试...")
-                    time.sleep(2 + random.random() * 2)
+                    if retry_count <= max_retries:
+                        self.log_message(f"第 {retry_count} 次下载失败，稍后重试...")
+                        time.sleep(1 + random.random())  # 减少等待时间
                 else:
                     filename = file
             except Exception as e:
                 last_error = str(e)
                 self.log_message(f"下载过程中发生异常: {str(e)}")
-                time.sleep(3)
+                time.sleep(2)
 
         if success:
             self.log_message(f"成功下载视频: {video_url}")
@@ -180,10 +182,11 @@ class VideoDownloadThread(threading.Thread):
     def _download_video_attempt(self, video_url: str) -> Tuple[bool, str, Optional[str]]:
         """单个视频下载尝试，返回（是否成功，错误信息，文件名）"""
         self.log_message(f"处理视频: {video_url}")
-        browser = get_browser()
+        browser = None
         filename = None
 
         try:
+            browser = get_browser()
             browser.get(video_url)
 
             # 使用条件等待替代固定等待
@@ -268,11 +271,11 @@ class VideoDownloadThread(threading.Thread):
             self.log_message(error_msg)
             return False, error_msg, filename
         finally:
-            try:
-                if browser:
+            if browser:
+                try:
                     browser.quit()
-            except Exception as e:
-                self.log_message(f"关闭浏览器时出错: {str(e)}")
+                except Exception as e:
+                    self.log_message(f"关闭浏览器时出错: {str(e)}")
 
     def save_video(self, url: str, filename: str) -> Tuple[bool, str]:
         """保存视频文件，返回（是否成功，错误信息）"""
@@ -307,7 +310,10 @@ class VideoDownloadThread(threading.Thread):
 
                     if not self.running:
                         if os.path.exists(filepath):
-                            os.remove(filepath)
+                            try:
+                                os.remove(filepath)
+                            except:
+                                pass
                         return False, "任务已停止"
 
                     if chunk:
@@ -334,60 +340,60 @@ class VideoDownloadThread(threading.Thread):
 
     def run(self) -> None:
         """运行下载任务"""
-        self.log_message(f"开始下载任务: {self.list_url}")
-        video_links, playlist_title = self.get_video_links()
+        try:
+            self.log_message(f"开始下载任务: {self.list_url}")
+            video_links, playlist_title = self.get_video_links()
 
-        if not video_links:
-            self.log_message("未找到视频链接")
-            return
+            if not video_links:
+                self.log_message("未找到视频链接")
+                return
 
-        self.log_message(f"找到 {len(video_links)} 个视频")
-        failed_downloads: List[str] = []
+            self.log_message(f"找到 {len(video_links)} 个视频")
+            failed_downloads: List[str] = []
 
-        # 使用线程池并发下载视频
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = []
-            for i, link in enumerate(video_links):
-                self.wait_if_paused()
-                if not self.running:
-                    self.log_message("下载任务已取消")
-                    break
+            # 使用线程池并发下载视频
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = []
+                for i, link in enumerate(video_links):
+                    if not self.running:
+                        break
 
-                if 'search?query' in link:
-                    self.log_message(f"链接: {link} 不是视频链接，跳过")
-                    continue
+                    if 'search?query' in link:
+                        self.log_message(f"链接: {link} 不是视频链接，跳过")
+                        continue
 
-                self.log_message(f"提交下载任务: 视频 {i + 1}/{len(video_links)}")
-                future = executor.submit(self.download_video, link)
-                futures.append(future)
-                time.sleep(random.uniform(0.5, 1.5))
+                    self.log_message(f"提交下载任务: 视频 {i + 1}/{len(video_links)}")
+                    future = executor.submit(self.download_video, link)
+                    futures.append(future)
+                    time.sleep(random.uniform(0.5, 1.0))  # 减少等待时间
 
-            # 等待所有任务完成
-            for i, future in enumerate(as_completed(futures)):
-                self.wait_if_paused()
-                if not self.running:
-                    for f in futures:
-                        if not f.done():
-                            f.cancel()
-                    self.log_message("下载任务已取消")
-                    break
+                # 等待所有任务完成
+                for i, future in enumerate(as_completed(futures)):
+                    if not self.running:
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                        self.log_message("下载任务已取消")
+                        break
 
-                try:
-                    success = future.result()
-                    if success:
-                        self.log_message(f"视频 {i + 1} 下载成功")
-                    else:
-                        self.log_message(f"视频 {i + 1} 下载失败")
+                    try:
+                        success = future.result(timeout=1800)  # 30分钟超时
+                        if success:
+                            self.log_message(f"视频 {i + 1} 下载成功")
+                        else:
+                            self.log_message(f"视频 {i + 1} 下载失败")
+                            if i < len(video_links):
+                                failed_downloads.append(video_links[i])
+                    except Exception as e:
+                        self.log_message(f"视频下载出错: {str(e)}")
                         if i < len(video_links):
                             failed_downloads.append(video_links[i])
-                except Exception as e:
-                    self.log_message(f"视频下载出错: {str(e)}")
-                    if i < len(video_links):
-                        failed_downloads.append(video_links[i])
 
-        # 如果有失败的任务，发送特殊格式的消息
-        if failed_downloads and self.running:
-            failed_urls = "|||".join(failed_downloads)
-            self.log_message(f"[FAILED_TASKS]|||{self.task_id}|||{failed_urls}")
+            # 发送完成信号
+            if self.running:
+                self.finished_signal.emit(self.task_id, failed_downloads)
+                self.log_message(f"下载任务完成: {self.list_url}")
 
-        self.log_message(f"下载任务完成: {self.list_url}")
+        except Exception as e:
+            self.log_message(f"下载任务异常: {str(e)}")
+            self.finished_signal.emit(self.task_id, [])

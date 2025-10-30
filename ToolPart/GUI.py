@@ -5,11 +5,11 @@ import configparser
 import uuid
 from typing import List, Optional, Dict, Any
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
-                             QScrollArea, QFrame, QFileDialog)
+                             QScrollArea, QFrame, QFileDialog, QMessageBox)
 
 from ToolPart.DownloadThread import VideoDownloadThread
 from ToolPart.Logger import LogEmitter
@@ -127,8 +127,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.active_threads: List[VideoDownloadThread] = []
         self.pending_tasks: List[Dict[str, Any]] = []  # 等待队列
         self.log_emitter = LogEmitter()
-        self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
-        self.max_concurrent_tasks = 2  # 最大并发任务数
+        self.max_concurrent_tasks = 2  # 减少并发任务数
 
         # 加载配置文件
         self.config = configparser.ConfigParser()
@@ -136,6 +135,9 @@ class HanimeDownloaderApp(QMainWindow):
         self.download_dir = self.load_config()
 
         self.init_ui()
+
+        # 在 init_ui() 之后连接信号
+        self.log_emitter.log_signal.connect(self.log_message)  # type: ignore
 
     def load_config(self) -> str:
         """加载配置文件，返回下载路径"""
@@ -240,21 +242,6 @@ class HanimeDownloaderApp(QMainWindow):
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("就绪")
 
-    def change_download_path(self) -> None:
-        """更改下载路径"""
-        new_path = QFileDialog.getExistingDirectory(
-            self,
-            "选择下载目录",
-            self.download_dir,
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
-        )
-
-        if new_path:
-            self.download_dir = new_path
-            self.download_path_label.setText(f"当前下载路径: {self.download_dir}")
-            self.save_config()
-            self.log_message(f"下载路径已更新为: {self.download_dir}")
-
     def log_message(self, message: str) -> None:
         """添加消息到日志区域"""
         if message.startswith("[TITLE_UPDATE]|||"):
@@ -336,7 +323,7 @@ class HanimeDownloaderApp(QMainWindow):
 
         # 检查当前活动任务数量
         active_count = sum(1 for thread in self.active_threads
-                          if thread.is_alive() and not getattr(thread, 'paused', False))
+                           if thread.isRunning() and not getattr(thread, 'paused', False))
 
         if active_count < self.max_concurrent_tasks:
             update_task_status(task_frame, "运行中", "#2ecc71")
@@ -357,23 +344,55 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_message(f"启动新下载任务: {url}")
         self.log_message(f"下载路径: {self.download_dir}")
 
-        thread = VideoDownloadThread(url, self.download_dir, self.log_emitter)
-        thread.daemon = True
+        thread = VideoDownloadThread(url, self.download_dir, task_id)
         thread.task_frame = task_frame
         thread.task_id = task_id
+
+        # 连接信号
+        thread.log_signal.connect(self.log_message)
+        thread.finished_signal.connect(self.on_download_finished)
+
         self.active_threads.append(thread)
 
         if task_id.startswith("failed_retry_"):
             update_task_status(task_frame, "运行中", "#2ecc71")
         else:
-            active_count = sum(1 for t in self.active_threads if t.is_alive())
+            active_count = sum(1 for t in self.active_threads if t.isRunning())
             if active_count <= self.max_concurrent_tasks:
                 update_task_status(task_frame, "运行中", "#2ecc71")
             else:
                 update_task_status(task_frame, "队列中", "#f39c12")
 
         thread.start()
-        threading.Thread(target=self.monitor_thread, args=(thread, task_frame), daemon=True).start()
+
+    def on_download_finished(self, task_id: str, failed_urls: List[str]) -> None:
+        """下载完成处理"""
+        # 查找对应的线程和任务框
+        thread = None
+        task_frame = None
+
+        for t in self.active_threads:
+            if t.task_id == task_id:
+                thread = t
+                task_frame = t.task_frame
+                break
+
+        if thread and thread in self.active_threads:
+            self.active_threads.remove(thread)
+
+        # 从界面移除任务框
+        if task_frame and task_frame.parent():
+            task_frame.deleteLater()
+
+        # 处理失败的任务
+        if failed_urls:
+            self.log_message(f"任务 {task_id} 完成，有 {len(failed_urls)} 个失败视频")
+            self.handle_failed_tasks(task_id, failed_urls)
+        else:
+            self.log_message(f"任务 {task_id} 完成")
+
+        # 启动下一个等待任务
+        self.start_next_task()
 
     def handle_failed_tasks(self, task_id: str, failed_urls: List[str]) -> None:
         """处理失败的任务，将其以暂停状态重新加入队列"""
@@ -437,29 +456,6 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_message(f"已将 {len(failed_urls)} 个失败视频以暂停状态加入下载队列")
         self.update_queue_status()
 
-    def monitor_thread(self, thread: VideoDownloadThread, task_frame: QFrame) -> None:
-        """监控线程状态并在完成后处理后续任务"""
-        thread.join(timeout=1800)  # 30分钟超时
-
-        if thread.is_alive():
-            self.log_message(f"任务超时: {thread.list_url}")
-            thread.stop()
-            try:
-                thread.join(timeout=10)  # 等待10秒让线程停止
-            except Exception:
-                pass
-
-        # 安全地从活动线程列表中移除
-        if thread in self.active_threads:
-            self.active_threads.remove(thread)
-
-        # 从界面移除任务框
-        if task_frame and task_frame.parent():
-            task_frame.deleteLater()
-
-        # 启动下一个等待任务
-        self.start_next_task()
-
     def start_next_task(self) -> None:
         """启动下一个等待中的任务"""
         if self.pending_tasks:
@@ -496,8 +492,11 @@ class HanimeDownloaderApp(QMainWindow):
         for thread in self.active_threads:
             if hasattr(thread, 'task_frame') and thread.task_frame == task_frame:
                 thread.stop()
+                if thread.isRunning():
+                    thread.wait(5000)  # 等待线程停止
                 self.log_message(f"任务已停止: {thread.list_url}")
-                self.active_threads.remove(thread)
+                if thread in self.active_threads:
+                    self.active_threads.remove(thread)
                 if task_frame and task_frame.parent():
                     task_frame.deleteLater()
                 self.start_next_task()
@@ -518,7 +517,9 @@ class HanimeDownloaderApp(QMainWindow):
         # 停止所有活动线程
         for thread in self.active_threads[:]:  # 使用副本遍历
             try:
-                thread.stop()
+                if thread.isRunning():
+                    thread.stop()
+                    thread.wait(5000)  # 等待5秒让线程停止
                 self.log_message(f"已停止任务: {thread.list_url}")
             except Exception as e:
                 self.log_message(f"停止任务时出错: {str(e)}")
@@ -537,9 +538,37 @@ class HanimeDownloaderApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.log_message("已停止所有下载任务")
 
+    def change_download_path(self) -> None:
+        """更改下载路径"""
+        new_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择下载目录",
+            self.download_dir,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+
+        if new_path:
+            self.download_dir = new_path
+            self.download_path_label.setText(f"当前下载路径: {self.download_dir}")
+            self.save_config()
+            self.log_message(f"下载路径已更新为: {self.download_dir}")
+
     def closeEvent(self, event) -> None:
         """关闭窗口时停止所有线程"""
         if self.active_threads or self.pending_tasks:
-            self.stop_all_downloads()
-            time.sleep(1)  # 给线程一点时间停止
-        event.accept()
+            reply = QMessageBox.question(
+                self,
+                "确认退出",
+                "有任务正在运行，确定要退出吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                self.stop_all_downloads()
+                time.sleep(2)  # 给线程更多时间停止
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
