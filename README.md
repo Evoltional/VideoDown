@@ -47,6 +47,8 @@ pyinstaller --onefile --windowed .\VideoDownLoad.py .\ToolPart\Browser.py .\Tool
 ### 补充
 批量下载后推荐使用 [Organize](https://github.com/Evoltional/Organize) 对文件进行整理
 
+如果进程不推进可考虑关闭无头模式来检查是否为网络问题（注释掉Browser.py里关于无头模式的设置即可）
+
 绕过 Cloudflare TurnStile 部分参考自 [CloudflareBypassForScraping](https://github.com/sarperavci/CloudflareBypassForScraping)
 
 ## 许可证

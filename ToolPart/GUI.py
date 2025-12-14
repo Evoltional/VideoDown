@@ -1,11 +1,10 @@
-import threading
-import time
-import os
 import configparser
+import os
+import time
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 
-from PyQt5.QtCore import Qt, QThread
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,

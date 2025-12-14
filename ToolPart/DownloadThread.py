@@ -6,11 +6,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Tuple
 import requests
-from PyQt5.QtWidgets import QFrame
 from PyQt5.QtCore import QThread, pyqtSignal
-
 from ToolPart.Browser import get_browser
-from ToolPart.Logger import LogEmitter, log_failure
+from ToolPart.Logger import log_failure
 
 
 class VideoDownloadThread(QThread):

@@ -16,7 +16,7 @@ def get_browser():
     options.set_argument('--disable-renderer-backgrounding')
     options.set_argument('--memory-pressure-off')
     options.set_argument('--max_old_space_size=1024')
-    # options.set_argument('--headless=new')  # 根据需求启用无头模式
+    options.set_argument('--headless=new')  # 根据需求启用无头模式
 
     # 设置用户代理
     user_agents = [
