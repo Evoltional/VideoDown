@@ -51,6 +51,7 @@ pyinstaller --onefile --windowed .\VideoDownLoad.py .\ToolPart\Browser.py .\Tool
 
 绕过 Cloudflare TurnStile 部分参考自 [CloudflareBypassForScraping](https://github.com/sarperavci/CloudflareBypassForScraping)
 
+PS:新加坡BEST
 ## 许可证
 
 本项目采用MIT许可证。
