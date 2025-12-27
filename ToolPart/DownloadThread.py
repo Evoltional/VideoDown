@@ -8,7 +8,7 @@ from typing import Optional, List, Tuple
 import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 from ToolPart.Browser import get_browser
-from ToolPart.Logger import log_failure
+from ToolPart.Logger import log_failure, TaskLogger
 
 
 class VideoDownloadThread(QThread):
@@ -17,11 +17,13 @@ class VideoDownloadThread(QThread):
     progress_signal = pyqtSignal(str, float)
     finished_signal = pyqtSignal(str, list)  # task_id, failed_urls
 
-    def __init__(self, list_url: str, download_dir: str, task_id: str):
+    def __init__(self, list_url: str, download_dir: str, task_id: str,
+                 task_logger: Optional[TaskLogger] = None):
         super().__init__()
         self.list_url = list_url
         self.download_dir = download_dir
         self.task_id = task_id
+        self.task_logger = task_logger
         self.running = True
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
@@ -60,12 +62,20 @@ class VideoDownloadThread(QThread):
         self.paused = True
         self.log_message(f"下载任务已暂停: {self.list_url}")
 
+        # 更新任务状态
+        if self.task_logger:
+            self.task_logger.log_task_update(self.task_id, status="paused")
+
     def resume(self) -> None:
         """继续下载任务"""
         with self.pause_cond:
             self.paused = False
             self.pause_cond.notify()
         self.log_message(f"下载任务已继续: {self.list_url}")
+
+        # 更新任务状态
+        if self.task_logger:
+            self.task_logger.log_task_update(self.task_id, status="running")
 
     def stop(self) -> None:
         """停止下载任务"""
@@ -74,6 +84,10 @@ class VideoDownloadThread(QThread):
             self.paused = False
             self.pause_cond.notify_all()
         self.log_message(f"下载任务已停止: {self.list_url}")
+
+        # 更新任务状态
+        if self.task_logger:
+            self.task_logger.log_task_update(self.task_id, status="paused")
 
     def wait_if_paused(self) -> None:
         """如果任务被暂停，则等待直到继续"""
@@ -114,6 +128,8 @@ class VideoDownloadThread(QThread):
                 if title_element:
                     playlist_title = title_element.text.strip()
                     self.log_message(f"播放列表标题: {playlist_title}")
+                    # 发送标题更新信号
+                    self.log_message(f"[TITLE_UPDATE]|||{self.task_id}|||{playlist_title}")
                 else:
                     self.log_message("未找到播放列表标题")
             except Exception as e:
@@ -127,6 +143,13 @@ class VideoDownloadThread(QThread):
                     unique_links = list(set(found_links))
                     self.log_message(f"找到 {len(unique_links)} 个唯一视频")
                     links = unique_links
+
+                    # 更新任务总视频数
+                    if self.task_logger:
+                        self.task_logger.log_task_update(
+                            self.task_id,
+                            total_videos=len(unique_links)
+                        )
 
         except Exception as e:
             self.log_message(f"获取视频链接时出错: {str(e)}")
@@ -175,6 +198,11 @@ class VideoDownloadThread(QThread):
             if last_error:
                 log_filename = filename if filename else video_url
                 log_failure(self.logger_dir, log_filename, video_url, last_error)
+
+            # 记录失败视频
+            if self.task_logger:
+                self.task_logger.add_failed_video(self.task_id, video_url)
+
             return False
 
     def _download_video_attempt(self, video_url: str) -> Tuple[bool, str, Optional[str]]:
@@ -338,16 +366,19 @@ class VideoDownloadThread(QThread):
 
     def run(self) -> None:
         """运行下载任务"""
+        failed_downloads: List[str] = []
+
         try:
             self.log_message(f"开始下载任务: {self.list_url}")
             video_links, playlist_title = self.get_video_links()
 
             if not video_links:
                 self.log_message("未找到视频链接")
+                # 发送完成信号
+                self.finished_signal.emit(self.task_id, failed_downloads)
                 return
 
             self.log_message(f"找到 {len(video_links)} 个视频")
-            failed_downloads: List[str] = []
 
             # 使用线程池并发下载视频
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -394,4 +425,4 @@ class VideoDownloadThread(QThread):
 
         except Exception as e:
             self.log_message(f"下载任务异常: {str(e)}")
-            self.finished_signal.emit(self.task_id, [])
+            self.finished_signal.emit(self.task_id, failed_downloads)
