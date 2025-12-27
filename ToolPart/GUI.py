@@ -192,9 +192,20 @@ class HanimeDownloaderApp(QMainWindow):
         input_group = QGroupBox("输入视频列表链接")
         input_layout = QVBoxLayout(input_group)
 
+        # 创建输入框和粘贴按钮的水平布局
+        url_input_layout = QHBoxLayout()
+
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("例如: https://hanime1.me/watch?v=????")
-        input_layout.addWidget(self.url_input)
+        url_input_layout.addWidget(self.url_input, 1)  # 添加拉伸因子1，让输入框占据更多空间
+
+        # 添加粘贴按钮
+        paste_btn = QPushButton("粘贴")
+        paste_btn.setFixedWidth(100)  # 设置固定宽度
+        paste_btn.clicked.connect(self.paste_clipboard)  # type: ignore
+        url_input_layout.addWidget(paste_btn)
+
+        input_layout.addLayout(url_input_layout)
 
         button_layout = QHBoxLayout()
         self.download_btn = QPushButton("开始下载")
@@ -240,6 +251,25 @@ class HanimeDownloaderApp(QMainWindow):
         # 状态栏
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("就绪")
+
+    def paste_clipboard(self) -> None:
+        """粘贴剪贴板内容到输入框"""
+        try:
+            # 导入剪贴板模块
+            from PyQt5.QtWidgets import QApplication
+
+            # 获取剪贴板内容
+            clipboard = QApplication.clipboard()
+            text = clipboard.text().strip()
+
+            if text:
+                self.url_input.setText(text)
+                self.log_message(f"已粘贴剪贴板内容: {text[:50]}{'...' if len(text) > 50 else ''}")
+            else:
+                self.log_message("剪贴板为空或内容不是文本")
+
+        except Exception as e:
+            self.log_message(f"粘贴失败: {str(e)}")
 
     def log_message(self, message: str) -> None:
         """添加消息到日志区域"""
