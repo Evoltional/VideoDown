@@ -373,9 +373,13 @@ class VideoDownloadThread(QThread):
             video_links, playlist_title = self.get_video_links()
 
             if not video_links:
-                self.log_message("未找到视频链接")
-                # 发送完成信号
-                self.finished_signal.emit(self.task_id, failed_downloads)
+                self.log_message("未找到视频链接，任务失败")
+                # 将整个任务URL添加到失败列表，以便重试
+                failed_downloads.append(self.list_url)
+
+                # 发送失败信号
+                if self.running:
+                    self.finished_signal.emit(self.task_id, failed_downloads)
                 return
 
             self.log_message(f"找到 {len(video_links)} 个视频")
@@ -425,4 +429,6 @@ class VideoDownloadThread(QThread):
 
         except Exception as e:
             self.log_message(f"下载任务异常: {str(e)}")
+            # 发生异常时，将整个任务URL添加到失败列表
+            failed_downloads.append(self.list_url)
             self.finished_signal.emit(self.task_id, failed_downloads)

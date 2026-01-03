@@ -18,7 +18,7 @@ class TaskLogger:
         os.makedirs(logger_dir, exist_ok=True)
 
     def log_task_start(self, task_id: str, url: str, download_dir: str,
-                       task_type: str = "playlist") -> None:
+                       task_type: str = "playlist", retry_count: int = 0) -> None:
         """记录任务开始"""
         try:
             tasks = self._load_tasks()
@@ -32,7 +32,9 @@ class TaskLogger:
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "failed_videos": [],  # 存储失败视频的URL
                 "completed_videos": [],  # 存储成功下载的视频URL
-                "total_videos": 0
+                "total_videos": 0,
+                "retry_count": retry_count,  # 重试次数
+                "last_error": None  # 上次错误信息
             }
             self._save_tasks(tasks)
         except Exception as e:
@@ -60,13 +62,16 @@ class TaskLogger:
         except Exception as e:
             print(f"记录任务完成失败: {str(e)}")
 
-    def log_task_failed(self, task_id: str, failed_urls: List[str]) -> None:
+    def log_task_failed(self, task_id: str, failed_urls: List[str], error: str = "") -> None:
         """记录任务失败（部分视频失败）"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
                 tasks[task_id]["status"] = "failed"
+
                 tasks[task_id]["failed_videos"] = failed_urls
+                tasks[task_id]["last_error"] = error
+                tasks[task_id]["retry_count"] = tasks[task_id].get("retry_count", 0) + 1
                 tasks[task_id]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._save_tasks(tasks)
         except Exception as e:
@@ -106,6 +111,14 @@ class TaskLogger:
         except Exception as e:
             print(f"获取未完成任务失败: {str(e)}")
             return {}
+
+    def get_task_info(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取特定任务信息"""
+        try:
+            tasks = self._load_tasks()
+            return tasks.get(task_id)
+        except Exception:
+            return None
 
     def _load_tasks(self) -> Dict[str, Any]:
         """加载任务文件"""
