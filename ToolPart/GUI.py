@@ -164,13 +164,121 @@ class HanimeDownloaderApp(QMainWindow):
             pending_tasks = self.task_logger.get_pending_tasks()
             self.log_message(f"找到 {len(pending_tasks)} 个未完成的任务")
 
+            # 收集所有失败任务的视频URL
+            all_failed_videos = {}
+            task_ids_to_remove = []
+
             for task_id, task_info in pending_tasks.items():
+                url = task_info["url"]
+                status = task_info.get("status", "pending")
+                failed_videos = task_info.get("failed_videos", [])
+                task_type = task_info.get("task_type", "playlist")
+
+                # 收集失败视频，但跳过那些已经是重试任务的任务
+                if status == "failed" and failed_videos and task_type == "playlist":
+                    all_failed_videos[task_id] = {
+                        "url": url,
+                        "failed_videos": failed_videos,
+                        "retry_count": task_info.get("retry_count", 0)
+                    }
+                    task_ids_to_remove.append(task_id)  # 标记原始任务为待删除
+
+            # 首先处理失败任务，创建重试任务
+            for task_id, task_info in all_failed_videos.items():
+                url = task_info["url"]
+                failed_videos = task_info["failed_videos"]
+                retry_count = task_info["retry_count"]
+
+                self.log_message(f"处理失败任务: {url} (包含 {len(failed_videos)} 个失败视频)")
+
+                # 为每个失败视频创建重试任务
+                for i, video_url in enumerate(failed_videos):
+                    new_task_id = f"{task_id}_retry_{i}_{int(time.time())}"
+
+                    # 检查是否已经有相同的重试任务
+                    task_exists = False
+                    for existing_id, existing_info in pending_tasks.items():
+                        if existing_info.get("url") == video_url and existing_info.get("task_type") == "video":
+                            task_exists = True
+                            break
+
+                    if not task_exists:
+                        # 创建视频重试任务
+                        self.task_logger.log_task_start(
+                            new_task_id,
+                            video_url,
+                            self.download_dir,
+                            task_type="video",
+                            retry_count=retry_count + 1
+                        )
+                        self.task_logger.log_task_update(new_task_id, status="paused")
+
+                        # 创建任务显示框
+                        retry_frame = QFrame()
+                        retry_frame.setFrameShape(QFrame.StyledPanel)
+                        retry_frame.setObjectName(new_task_id)
+                        retry_frame.url = video_url
+                        retry_layout = QVBoxLayout(retry_frame)
+
+                        task_label = QLabel(f"失败重试: {video_url[:50]}{'...' if len(video_url) > 50 else ''}")
+                        task_label.setStyleSheet("color: #ecf0f1; font-weight: bold;")
+                        task_label.setToolTip(video_url)
+                        retry_layout.addWidget(task_label)
+
+                        status_label = QLabel("状态: 已暂停")
+                        status_label.setStyleSheet("color: #f39c12;")
+                        status_label.setObjectName("status_label")
+                        retry_layout.addWidget(status_label)
+
+                        button_layout = QHBoxLayout()
+
+                        pause_btn = QPushButton("暂停")
+                        pause_btn.setObjectName("pause_btn")
+                        pause_btn.setEnabled(False)
+                        pause_btn.clicked.connect(lambda checked, frame=retry_frame: self.pause_task(frame))
+                        button_layout.addWidget(pause_btn)
+
+                        resume_btn = QPushButton("继续")
+                        resume_btn.setObjectName("resume_btn")
+                        resume_btn.setEnabled(True)
+                        resume_btn.clicked.connect(lambda checked, frame=retry_frame: self.resume_task(frame))
+                        button_layout.addWidget(resume_btn)
+
+                        stop_btn = QPushButton("停止")
+                        stop_btn.setObjectName("stop_btn")
+                        stop_btn.clicked.connect(lambda checked, frame=retry_frame: self.stop_task(frame))
+                        button_layout.addWidget(stop_btn)
+
+                        retry_layout.addLayout(button_layout)
+                        self.tasks_layout.addWidget(retry_frame)
+
+                        self.pending_tasks.append({
+                            "url": video_url,
+                            "frame": retry_frame,
+                            "task_id": new_task_id,
+                            "status": "paused"
+                        })
+
+                # 移除原始任务记录
+                self.task_logger.remove_task(task_id)
+                self.log_message(f"已移除原始失败任务: {url}")
+
+            # 然后恢复其他任务（不包括已处理的失败任务）
+            for task_id, task_info in pending_tasks.items():
+                # 跳过已经处理的失败任务
+                if task_id in task_ids_to_remove:
+                    continue
+
                 url = task_info["url"]
                 download_dir = task_info.get("download_dir", self.download_dir)
                 status = task_info.get("status", "pending")
-                failed_videos = task_info.get("failed_videos", [])
+                task_type = task_info.get("task_type", "playlist")
 
-                self.log_message(f"恢复任务: {url} (状态: {status})")
+                # 跳过视频类型的重试任务，因为上面已经处理过了
+                if task_type == "video":
+                    continue
+
+                self.log_message(f"恢复任务: {url} (状态: {status}, 类型: {task_type})")
 
                 # 创建任务显示框
                 task_frame = QFrame()
@@ -179,8 +287,13 @@ class HanimeDownloaderApp(QMainWindow):
                 task_frame.url = url
                 task_layout = QVBoxLayout(task_frame)
 
-                task_label = QLabel(f"任务: {url} [恢复]")
+                # 根据任务类型显示不同的标签
+                if task_type == "retry":
+                    task_label = QLabel(f"失败重试: {url[:50]}{'...' if len(url) > 50 else ''}")
+                else:
+                    task_label = QLabel(f"任务: {url[:50]}{'...' if len(url) > 50 else ''}")
                 task_label.setStyleSheet("color: #ecf0f1; font-weight: bold;")
+                task_label.setToolTip(url)
                 task_layout.addWidget(task_label)
 
                 status_label = QLabel(f"状态: {status}")
@@ -192,17 +305,17 @@ class HanimeDownloaderApp(QMainWindow):
 
                 pause_btn = QPushButton("暂停")
                 pause_btn.setObjectName("pause_btn")
-                pause_btn.clicked.connect(lambda: self.pause_task(task_frame))  # type: ignore
+                pause_btn.clicked.connect(lambda checked, frame=task_frame: self.pause_task(frame))
                 button_layout.addWidget(pause_btn)
 
                 resume_btn = QPushButton("继续")
                 resume_btn.setObjectName("resume_btn")
-                resume_btn.clicked.connect(lambda: self.resume_task(task_frame))  # type: ignore
+                resume_btn.clicked.connect(lambda checked, frame=task_frame: self.resume_task(frame))
                 button_layout.addWidget(resume_btn)
 
                 stop_btn = QPushButton("停止")
                 stop_btn.setObjectName("stop_btn")
-                stop_btn.clicked.connect(lambda: self.stop_task(task_frame))  # type: ignore
+                stop_btn.clicked.connect(lambda checked, frame=task_frame: self.stop_task(frame))
                 button_layout.addWidget(stop_btn)
 
                 task_layout.addLayout(button_layout)
@@ -213,24 +326,33 @@ class HanimeDownloaderApp(QMainWindow):
                     status_label.setStyleSheet("color: #f39c12;")
                     pause_btn.setEnabled(False)
                     resume_btn.setEnabled(True)
-                    # 添加到队列但不立即启动
                     self.pending_tasks.append({
                         "url": url,
                         "frame": task_frame,
                         "task_id": task_id,
                         "status": "paused"
                     })
-                elif status == "failed" and failed_videos:
-                    status_label.setStyleSheet("color: #e74c3c;")
-                    pause_btn.setEnabled(False)
+                elif status == "running":
+                    status_label.setStyleSheet("color: #2ecc71;")
+                    pause_btn.setEnabled(True)
                     resume_btn.setEnabled(False)
-                    # 处理失败视频
-                    self.handle_failed_tasks(task_id, failed_videos)
-                else:
+                    # 检查是否可以立即启动
+                    active_count = sum(1 for thread in self.active_threads
+                                       if thread.isRunning() and not getattr(thread, 'paused', False))
+                    if active_count < self.max_concurrent_tasks:
+                        self.start_download_task(url, task_frame, task_id)
+                    else:
+                        self.pending_tasks.append({
+                            "url": url,
+                            "frame": task_frame,
+                            "task_id": task_id,
+                            "status": "pending"
+                        })
+                        update_task_status(task_frame, "队列中", "#f39c12")
+                else:  # pending 或其他状态
                     status_label.setStyleSheet("color: #f39c12;")
                     pause_btn.setEnabled(False)
                     resume_btn.setEnabled(False)
-                    # 添加到等待队列
                     self.pending_tasks.append({
                         "url": url,
                         "frame": task_frame,
