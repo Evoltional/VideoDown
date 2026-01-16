@@ -18,12 +18,13 @@ class VideoDownloadThread(QThread):
     finished_signal = pyqtSignal(str, list)  # task_id, failed_urls
 
     def __init__(self, list_url: str, download_dir: str, task_id: str,
-                 task_logger: Optional[TaskLogger] = None):
+                 task_logger: Optional[TaskLogger] = None, is_retry: bool = False):
         super().__init__()
         self.list_url = list_url
         self.download_dir = download_dir
         self.task_id = task_id
         self.task_logger = task_logger
+        self.is_retry = is_retry  # 是否是重试任务
         self.running = True
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
@@ -64,7 +65,7 @@ class VideoDownloadThread(QThread):
 
         # 更新任务状态
         if self.task_logger:
-            self.task_logger.log_task_update(self.task_id, status="paused")
+            self.task_logger.update_task_status(self.task_id, "paused")
 
     def resume(self) -> None:
         """继续下载任务"""
@@ -75,7 +76,7 @@ class VideoDownloadThread(QThread):
 
         # 更新任务状态
         if self.task_logger:
-            self.task_logger.log_task_update(self.task_id, status="running")
+            self.task_logger.update_task_status(self.task_id, "running")
 
     def stop(self) -> None:
         """停止下载任务"""
@@ -87,7 +88,7 @@ class VideoDownloadThread(QThread):
 
         # 更新任务状态
         if self.task_logger:
-            self.task_logger.log_task_update(self.task_id, status="paused")
+            self.task_logger.update_task_status(self.task_id, "paused")
 
     def wait_if_paused(self) -> None:
         """如果任务被暂停，则等待直到继续"""
@@ -146,10 +147,7 @@ class VideoDownloadThread(QThread):
 
                     # 更新任务总视频数
                     if self.task_logger:
-                        self.task_logger.log_task_update(
-                            self.task_id,
-                            total_videos=len(unique_links)
-                        )
+                        self.task_logger.update_task_total_videos(self.task_id, len(unique_links))
 
         except Exception as e:
             self.log_message(f"获取视频链接时出错: {str(e)}")
@@ -166,6 +164,10 @@ class VideoDownloadThread(QThread):
         """下载单个视频，增加失败重试机制"""
         if not self.running:
             return False
+
+        # 记录视频任务开始
+        if self.task_logger:
+            self.task_logger.log_video_task_start(self.task_id, video_url)
 
         max_retries = 2  # 减少重试次数
         retry_count = 0
@@ -192,6 +194,9 @@ class VideoDownloadThread(QThread):
 
         if success:
             self.log_message(f"成功下载视频: {video_url}")
+            # 记录视频任务完成
+            if self.task_logger:
+                self.task_logger.log_video_task_complete(self.task_id, video_url)
             return True
         else:
             self.log_message(f"下载失败: {video_url} (超过最大重试次数)")
@@ -199,9 +204,9 @@ class VideoDownloadThread(QThread):
                 log_filename = filename if filename else video_url
                 log_failure(self.logger_dir, log_filename, video_url, last_error)
 
-            # 记录失败视频
+            # 记录视频任务失败
             if self.task_logger:
-                self.task_logger.add_failed_video(self.task_id, video_url)
+                self.task_logger.log_video_task_failed(self.task_id, video_url, last_error)
 
             return False
 
@@ -374,12 +379,13 @@ class VideoDownloadThread(QThread):
 
             if not video_links:
                 self.log_message("未找到视频链接，任务失败")
-                # 将整个任务URL添加到失败列表，以便重试
-                failed_downloads.append(self.list_url)
+                # 标记任务失败
+                if self.task_logger:
+                    self.task_logger.mark_task_failed(self.task_id, "未找到视频链接")
 
                 # 发送失败信号
                 if self.running:
-                    self.finished_signal.emit(self.task_id, failed_downloads)
+                    self.finished_signal.emit(self.task_id, [self.list_url])
                 return
 
             self.log_message(f"找到 {len(video_links)} 个视频")
@@ -422,6 +428,17 @@ class VideoDownloadThread(QThread):
                         if i < len(video_links):
                             failed_downloads.append(video_links[i])
 
+            # 检查任务状态
+            if self.task_logger:
+                task_info = self.task_logger.get_task_info(self.task_id)
+                if task_info:
+                    if failed_downloads:
+                        # 有失败视频，标记任务失败
+                        self.task_logger.update_task_status(self.task_id, "failed")
+                    else:
+                        # 所有视频都成功，标记任务完成
+                        self.task_logger.update_task_status(self.task_id, "completed")
+
             # 发送完成信号
             if self.running:
                 self.finished_signal.emit(self.task_id, failed_downloads)
@@ -429,6 +446,9 @@ class VideoDownloadThread(QThread):
 
         except Exception as e:
             self.log_message(f"下载任务异常: {str(e)}")
-            # 发生异常时，将整个任务URL添加到失败列表
+            # 发生异常时，标记任务失败
+            if self.task_logger:
+                self.task_logger.mark_task_failed(self.task_id, str(e))
+
             failed_downloads.append(self.list_url)
             self.finished_signal.emit(self.task_id, failed_downloads)

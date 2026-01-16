@@ -1,8 +1,9 @@
 import os
 import time
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from PyQt5.QtCore import pyqtSignal, QObject
+from datetime import datetime
 
 
 class LogEmitter(QObject):
@@ -10,7 +11,7 @@ class LogEmitter(QObject):
 
 
 class TaskLogger:
-    """任务日志管理器，用于恢复未完成任务"""
+    """任务日志管理器，用于管理所有任务状态"""
 
     def __init__(self, logger_dir: str = "./logger"):
         self.logger_dir = logger_dir
@@ -26,109 +27,259 @@ class TaskLogger:
                 "task_id": task_id,
                 "url": url,
                 "download_dir": download_dir,
-                "task_type": task_type,
-                "status": "pending",  # pending, running, paused, failed, completed
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "task_type": task_type,  # "playlist" or "video"
+                "status": "running",  # running, paused, failed, completed
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "video_tasks": {},  # 存储每个视频任务的状态
                 "failed_videos": [],  # 存储失败视频的URL
                 "completed_videos": [],  # 存储成功下载的视频URL
                 "total_videos": 0,
-                "retry_count": retry_count,  # 重试次数
-                "last_error": None  # 上次错误信息
+                "current_progress": 0,
+                "retry_count": retry_count,
+                "last_error": None
             }
             self._save_tasks(tasks)
         except Exception as e:
             print(f"记录任务开始失败: {str(e)}")
 
-    def log_task_update(self, task_id: str, **kwargs) -> None:
-        """更新任务信息"""
+    def log_video_task_start(self, task_id: str, video_url: str, video_id: str = None) -> None:
+        """记录视频任务开始"""
+        try:
+            if video_id is None:
+                video_id = self._generate_video_id(video_url)
+
+            tasks = self._load_tasks()
+            if task_id in tasks:
+                tasks[task_id]["video_tasks"][video_id] = {
+                    "url": video_url,
+                    "status": "running",  # running, completed, failed
+                    "start_time": datetime.now().isoformat(),
+                    "end_time": None,
+                    "error": None,
+                    "retry_count": 0
+                }
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
+                self._save_tasks(tasks)
+        except Exception as e:
+            print(f"记录视频任务开始失败: {str(e)}")
+
+    def log_video_task_complete(self, task_id: str, video_url: str, video_id: str = None) -> None:
+        """记录视频任务完成"""
+        try:
+            if video_id is None:
+                video_id = self._generate_video_id(video_url)
+
+            tasks = self._load_tasks()
+            if task_id in tasks:
+                # 更新视频任务状态
+                if video_id in tasks[task_id]["video_tasks"]:
+                    tasks[task_id]["video_tasks"][video_id]["status"] = "completed"
+                    tasks[task_id]["video_tasks"][video_id]["end_time"] = datetime.now().isoformat()
+
+                # 添加到完成列表
+                if video_url not in tasks[task_id]["completed_videos"]:
+                    tasks[task_id]["completed_videos"].append(video_url)
+
+                # 从失败列表中移除（如果存在）
+                if video_url in tasks[task_id]["failed_videos"]:
+                    tasks[task_id]["failed_videos"].remove(video_url)
+
+                # 更新进度
+                total = tasks[task_id]["total_videos"]
+                completed = len(tasks[task_id]["completed_videos"])
+                if total > 0:
+                    tasks[task_id]["current_progress"] = int((completed / total) * 100)
+
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
+                self._save_tasks(tasks)
+        except Exception as e:
+            print(f"记录视频任务完成失败: {str(e)}")
+
+    def log_video_task_failed(self, task_id: str, video_url: str, error: str = "", video_id: str = None) -> None:
+        """记录视频任务失败"""
+        try:
+            if video_id is None:
+                video_id = self._generate_video_id(video_url)
+
+            tasks = self._load_tasks()
+            if task_id in tasks:
+                # 更新视频任务状态
+                if video_id in tasks[task_id]["video_tasks"]:
+                    tasks[task_id]["video_tasks"][video_id]["status"] = "failed"
+                    tasks[task_id]["video_tasks"][video_id]["end_time"] = datetime.now().isoformat()
+                    tasks[task_id]["video_tasks"][video_id]["error"] = error
+                    tasks[task_id]["video_tasks"][video_id]["retry_count"] += 1
+
+                # 添加到失败列表
+                if video_url not in tasks[task_id]["failed_videos"]:
+                    tasks[task_id]["failed_videos"].append(video_url)
+
+                # 从完成列表中移除（如果存在）
+                if video_url in tasks[task_id]["completed_videos"]:
+                    tasks[task_id]["completed_videos"].remove(video_url)
+
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
+                self._save_tasks(tasks)
+        except Exception as e:
+            print(f"记录视频任务失败失败: {str(e)}")
+
+    def update_task_total_videos(self, task_id: str, total_videos: int) -> None:
+        """更新任务总视频数"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
-                tasks[task_id].update(kwargs)
-                tasks[task_id]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                tasks[task_id]["total_videos"] = total_videos
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
                 self._save_tasks(tasks)
         except Exception as e:
-            print(f"更新任务失败: {str(e)}")
+            print(f"更新任务总视频数失败: {str(e)}")
 
-    def log_task_completed(self, task_id: str) -> None:
-        """记录任务完成"""
+    def update_task_status(self, task_id: str, status: str) -> None:
+        """更新任务状态"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
-                tasks[task_id]["status"] = "completed"
-                tasks[task_id]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                self._save_tasks(tasks)
-        except Exception as e:
-            print(f"记录任务完成失败: {str(e)}")
+                tasks[task_id]["status"] = status
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
 
-    def log_task_failed(self, task_id: str, failed_urls: List[str], error: str = "") -> None:
-        """记录任务失败（部分视频失败）"""
+                # 如果任务完成且没有失败视频，则删除任务记录
+                if status == "completed" and not tasks[task_id]["failed_videos"]:
+                    self._remove_task_completely(tasks, task_id)
+                else:
+                    self._save_tasks(tasks)
+        except Exception as e:
+            print(f"更新任务状态失败: {str(e)}")
+
+    def mark_task_failed(self, task_id: str, error: str = "") -> None:
+        """标记任务失败"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
                 tasks[task_id]["status"] = "failed"
-
-                tasks[task_id]["failed_videos"] = failed_urls
                 tasks[task_id]["last_error"] = error
-                tasks[task_id]["retry_count"] = tasks[task_id].get("retry_count", 0) + 1
-                tasks[task_id]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
                 self._save_tasks(tasks)
         except Exception as e:
-            print(f"记录任务失败失败: {str(e)}")
+            print(f"标记任务失败失败: {str(e)}")
 
-    def add_failed_video(self, task_id: str, video_url: str) -> None:
-        """添加失败视频到任务记录"""
+    def get_all_tasks(self) -> Dict[str, Any]:
+        """获取所有任务"""
+        try:
+            return self._load_tasks()
+        except Exception as e:
+            print(f"获取所有任务失败: {str(e)}")
+            return {}
+
+    def get_pending_tasks(self) -> List[Dict[str, Any]]:
+        """获取所有待处理任务（状态为 running, paused, failed）"""
+        try:
+            tasks = self._load_tasks()
+            pending_tasks = []
+
+            for task_id, task_info in tasks.items():
+                if task_info["status"] in ["running", "paused", "failed"]:
+                    pending_tasks.append({
+                        "task_id": task_id,
+                        **task_info
+                    })
+
+            return pending_tasks
+        except Exception as e:
+            print(f"获取待处理任务失败: {str(e)}")
+            return []
+
+    def get_failed_tasks(self) -> List[Dict[str, Any]]:
+        """获取所有失败的任务"""
+        try:
+            tasks = self._load_tasks()
+            failed_tasks = []
+
+            for task_id, task_info in tasks.items():
+                if task_info["status"] == "failed":
+                    failed_tasks.append({
+                        "task_id": task_id,
+                        **task_info
+                    })
+
+            return failed_tasks
+        except Exception as e:
+            print(f"获取失败任务失败: {str(e)}")
+            return []
+
+    def get_task_info(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取特定任务信息"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
-                if video_url not in tasks[task_id]["failed_videos"]:
-                    tasks[task_id]["failed_videos"].append(video_url)
-                    tasks[task_id]["status"] = "failed"
-                    tasks[task_id]["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    self._save_tasks(tasks)
-        except Exception as e:
-            print(f"添加失败视频失败: {str(e)}")
+                return {
+                    "task_id": task_id,
+                    **tasks[task_id]
+                }
+            return None
+        except Exception:
+            return None
 
     def remove_task(self, task_id: str) -> None:
         """移除任务记录"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
-                del tasks[task_id]
-                self._save_tasks(tasks)
+                # 如果任务完成且没有失败视频，则完全删除
+                if tasks[task_id]["status"] == "completed" and not tasks[task_id]["failed_videos"]:
+                    self._remove_task_completely(tasks, task_id)
+                else:
+                    # 否则标记为失败
+                    tasks[task_id]["status"] = "failed"
+                    tasks[task_id]["updated_at"] = datetime.now().isoformat()
+                    self._save_tasks(tasks)
         except Exception as e:
             print(f"移除任务失败: {str(e)}")
 
-    def get_pending_tasks(self) -> Dict[str, Any]:
-        """获取所有未完成任务"""
+    def clear_task_status(self, task_id: str) -> Dict[str, Any]:
+        """清空任务状态，用于重新开始"""
         try:
             tasks = self._load_tasks()
-            # 过滤出未完成的任务
-            pending_tasks = {k: v for k, v in tasks.items()
-                             if v["status"] in ["pending", "running", "paused", "failed"]}
-            return pending_tasks
-        except Exception as e:
-            print(f"获取未完成任务失败: {str(e)}")
-            return {}
+            if task_id in tasks:
+                task_info = tasks[task_id].copy()
 
-    def get_task_info(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """获取特定任务信息"""
-        try:
-            tasks = self._load_tasks()
-            return tasks.get(task_id)
-        except Exception:
-            return None
+                # 清空状态，保留基本信息
+                tasks[task_id] = {
+                    "task_id": task_id,
+                    "url": task_info["url"],
+                    "download_dir": task_info["download_dir"],
+                    "task_type": task_info["task_type"],
+                    "status": "paused",  # 设置为暂停状态，等待用户继续
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "video_tasks": {},
+                    "failed_videos": [],
+                    "completed_videos": [],
+                    "total_videos": 0,
+                    "current_progress": 0,
+                    "retry_count": task_info.get("retry_count", 0) + 1,
+                    "last_error": None
+                }
+
+                self._save_tasks(tasks)
+                return tasks[task_id]
+            return {}
+        except Exception as e:
+            print(f"清空任务状态失败: {str(e)}")
+            return {}
 
     def _load_tasks(self) -> Dict[str, Any]:
         """加载任务文件"""
         try:
             if os.path.exists(self.pending_tasks_file):
                 with open(self.pending_tasks_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-        except Exception:
-            pass
-        return {}
+                    content = f.read().strip()
+                    if content:
+                        return json.loads(content)
+            return {}
+        except Exception as e:
+            print(f"加载任务文件失败: {str(e)}")
+            return {}
 
     def _save_tasks(self, tasks: Dict[str, Any]) -> None:
         """保存任务文件"""
@@ -137,6 +288,20 @@ class TaskLogger:
                 json.dump(tasks, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"保存任务文件失败: {str(e)}")
+
+    def _remove_task_completely(self, tasks: Dict[str, Any], task_id: str) -> None:
+        """完全删除任务"""
+        try:
+            if task_id in tasks:
+                del tasks[task_id]
+                self._save_tasks(tasks)
+        except Exception as e:
+            print(f"完全删除任务失败: {str(e)}")
+
+    def _generate_video_id(self, video_url: str) -> str:
+        """生成视频ID"""
+        import hashlib
+        return hashlib.md5(video_url.encode()).hexdigest()[:8]
 
 
 def log_failure(logger_dir: str, filename: str, url: str, error: str = "") -> Optional[str]:
