@@ -1,7 +1,7 @@
 import os
 import time
 import json
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 from PyQt5.QtCore import pyqtSignal, QObject
 from datetime import datetime
 
@@ -28,7 +28,7 @@ class TaskLogger:
                 "url": url,
                 "download_dir": download_dir,
                 "task_type": task_type,  # "playlist" or "video"
-                "status": "running",  # running, paused, failed, completed
+                "status": "running",  # running, paused, completed, failed
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
                 "video_tasks": {},  # 存储每个视频任务的状态
@@ -37,7 +37,8 @@ class TaskLogger:
                 "total_videos": 0,
                 "current_progress": 0,
                 "retry_count": retry_count,
-                "last_error": None
+                "last_error": None,
+                "is_retry": False  # 标记是否为重试任务
             }
             self._save_tasks(tasks)
         except Exception as e:
@@ -140,6 +141,7 @@ class TaskLogger:
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
+                old_status = tasks[task_id]["status"]
                 tasks[task_id]["status"] = status
                 tasks[task_id]["updated_at"] = datetime.now().isoformat()
 
@@ -148,6 +150,10 @@ class TaskLogger:
                     self._remove_task_completely(tasks, task_id)
                 else:
                     self._save_tasks(tasks)
+
+                # 如果是任务从失败状态变为运行中，清空失败状态（准备重试）
+                if old_status == "failed" and status == "running":
+                    self._clear_failed_state(tasks, task_id)
         except Exception as e:
             print(f"更新任务状态失败: {str(e)}")
 
@@ -236,36 +242,26 @@ class TaskLogger:
         except Exception as e:
             print(f"移除任务失败: {str(e)}")
 
-    def clear_task_status(self, task_id: str) -> Dict[str, Any]:
-        """清空任务状态，用于重新开始"""
+    def reset_task_for_retry(self, task_id: str) -> Dict[str, Any]:
+        """重置任务状态用于重试"""
         try:
             tasks = self._load_tasks()
             if task_id in tasks:
-                task_info = tasks[task_id].copy()
-
-                # 清空状态，保留基本信息
-                tasks[task_id] = {
-                    "task_id": task_id,
-                    "url": task_info["url"],
-                    "download_dir": task_info["download_dir"],
-                    "task_type": task_info["task_type"],
-                    "status": "paused",  # 设置为暂停状态，等待用户继续
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
-                    "video_tasks": {},
-                    "failed_videos": [],
-                    "completed_videos": [],
-                    "total_videos": 0,
-                    "current_progress": 0,
-                    "retry_count": task_info.get("retry_count", 0) + 1,
-                    "last_error": None
-                }
+                # 清空失败状态，准备重试
+                tasks[task_id]["failed_videos"] = []
+                tasks[task_id]["completed_videos"] = []
+                tasks[task_id]["video_tasks"] = {}
+                tasks[task_id]["current_progress"] = 0
+                tasks[task_id]["retry_count"] = tasks[task_id].get("retry_count", 0) + 1
+                tasks[task_id]["is_retry"] = True
+                tasks[task_id]["status"] = "paused"  # 设置为暂停状态，等待用户继续
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
 
                 self._save_tasks(tasks)
                 return tasks[task_id]
             return {}
         except Exception as e:
-            print(f"清空任务状态失败: {str(e)}")
+            print(f"重置任务状态失败: {str(e)}")
             return {}
 
     def _load_tasks(self) -> Dict[str, Any]:
@@ -297,6 +293,18 @@ class TaskLogger:
                 self._save_tasks(tasks)
         except Exception as e:
             print(f"完全删除任务失败: {str(e)}")
+
+    def _clear_failed_state(self, tasks: Dict[str, Any], task_id: str) -> None:
+        """清空失败状态"""
+        try:
+            if task_id in tasks:
+                tasks[task_id]["failed_videos"] = []
+                tasks[task_id]["last_error"] = None
+                tasks[task_id]["is_retry"] = True
+                tasks[task_id]["updated_at"] = datetime.now().isoformat()
+                self._save_tasks(tasks)
+        except Exception as e:
+            print(f"清空失败状态失败: {str(e)}")
 
     def _generate_video_id(self, video_url: str) -> str:
         """生成视频ID"""
