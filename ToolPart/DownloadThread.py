@@ -18,13 +18,15 @@ class VideoDownloadThread(QThread):
     finished_signal = pyqtSignal(str, list)  # task_id, failed_urls
 
     def __init__(self, list_url: str, download_dir: str, task_id: str,
-                 task_logger: Optional[TaskLogger] = None, is_retry: bool = False):
+                 task_logger: Optional[TaskLogger] = None, is_retry: bool = False,
+                 headless: bool = True):  # 添加headless参数
         super().__init__()
         self.list_url = list_url
         self.download_dir = download_dir
         self.task_id = task_id
         self.task_logger = task_logger
         self.is_retry = is_retry  # 是否是重试任务
+        self.headless = headless  # 保存headless参数
         self.running = True
         self.paused = False
         self.pause_cond = threading.Condition(threading.Lock())
@@ -104,8 +106,12 @@ class VideoDownloadThread(QThread):
         playlist_title: Optional[str] = None
 
         try:
-            browser = get_browser()
+            browser = get_browser(self.headless)  # 使用headless参数
             browser.get(self.list_url)
+
+            # 如果不是无头模式，记录日志
+            if not self.headless:
+                self.log_message("非无头模式：浏览器窗口已打开，请查看浏览器界面")
 
             # 使用条件等待替代固定等待
             start_time = time.time()
@@ -217,8 +223,12 @@ class VideoDownloadThread(QThread):
         filename = None
 
         try:
-            browser = get_browser()
+            browser = get_browser(self.headless)  # 使用headless参数
             browser.get(video_url)
+
+            # 如果不是无头模式，记录日志
+            if not self.headless:
+                self.log_message("非无头模式：正在打开视频页面...")
 
             # 使用条件等待替代固定等待
             start_time = time.time()
@@ -245,6 +255,10 @@ class VideoDownloadThread(QThread):
 
             self.log_message(f"找到下载页面: {download_page_url}")
             browser.get(download_page_url)
+
+            # 如果不是无头模式，记录日志
+            if not self.headless:
+                self.log_message("非无头模式：正在打开下载页面...")
 
             # 等待Cloudflare验证
             start_time = time.time()

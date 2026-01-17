@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
-                             QScrollArea, QFrame, QFileDialog, QMessageBox)
+                             QScrollArea, QFrame, QFileDialog, QMessageBox, QCheckBox)  # 添加QCheckBox
 
 from ToolPart.DownloadThread import VideoDownloadThread
 from ToolPart.Logger import LogEmitter, TaskLogger
@@ -54,6 +54,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.stop_btn = None
         self.download_btn = None
         self.download_path_label = None
+        self.headless_checkbox = None  # 无头模式复选框
         self.setWindowTitle("Hanime视频下载器")
         self.setGeometry(100, 100, 800, 1100)
         self.setStyleSheet("""
@@ -121,6 +122,24 @@ class HanimeDownloaderApp(QMainWindow):
             #tasks_container {
                 background-color: #2c3e50;
             }
+            QCheckBox {
+                color: #ecf0f1;
+                spacing: 5px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 2px solid #7f8c8d;
+                border-radius: 3px;
+                background-color: #2c3e50;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #3498db;
+                border-radius: 3px;
+                background-color: #3498db;
+            }
         """)
 
         self.active_threads: List[VideoDownloadThread] = []
@@ -133,6 +152,7 @@ class HanimeDownloaderApp(QMainWindow):
         self.config = configparser.ConfigParser()
         self.config_file = "./config.ini"
         self.download_dir = self.load_config()
+        self.headless_mode = self.load_headless_config()  # 加载无头模式配置
 
         self.init_ui()
         self.restore_pending_tasks()  # 恢复未完成任务
@@ -152,9 +172,20 @@ class HanimeDownloaderApp(QMainWindow):
         os.makedirs(default_dir, exist_ok=True)
         return default_dir
 
+    def load_headless_config(self) -> bool:
+        """加载无头模式配置"""
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file, encoding='utf-8')
+            # 默认为True（开启无头模式）
+            return self.config.getboolean('Settings', 'HeadlessMode', fallback=True)
+        return True
+
     def save_config(self) -> None:
         """保存配置到文件"""
-        self.config['Settings'] = {'DownloadDir': self.download_dir}
+        self.config['Settings'] = {
+            'DownloadDir': self.download_dir,
+            'HeadlessMode': str(self.headless_mode)
+        }
         with open(self.config_file, 'w', encoding='utf-8') as configfile:
             self.config.write(configfile)  # type: ignore
 
@@ -317,6 +348,21 @@ class HanimeDownloaderApp(QMainWindow):
         path_control_layout.addWidget(change_path_btn)
 
         path_layout.addLayout(path_control_layout)
+
+        # 添加无头模式设置
+        settings_layout = QHBoxLayout()
+        self.headless_checkbox = QCheckBox("开启无头模式")
+        self.headless_checkbox.setChecked(self.headless_mode)
+        self.headless_checkbox.stateChanged.connect(self.on_headless_changed)  # type: ignore
+        settings_layout.addWidget(self.headless_checkbox)
+
+        # 添加说明标签
+        headless_info = QLabel("(无头模式不显示浏览器界面，适合后台运行)")
+        headless_info.setStyleSheet("color: #95a5a6; font-size: 12px; font-style: italic;")
+        settings_layout.addWidget(headless_info)
+        settings_layout.addStretch()  # 添加弹性空间
+
+        path_layout.addLayout(settings_layout)
         main_layout.addWidget(path_group)
 
         # 输入区域
@@ -382,6 +428,16 @@ class HanimeDownloaderApp(QMainWindow):
         # 状态栏
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("就绪")
+
+    def on_headless_changed(self, state: int) -> None:
+        """无头模式复选框状态改变"""
+        self.headless_mode = (state == Qt.Checked)
+        self.save_config()
+
+        if self.headless_mode:
+            self.log_message("已启用无头模式（不显示浏览器界面）")
+        else:
+            self.log_message("已禁用无头模式（将显示浏览器界面）")
 
     def paste_clipboard(self) -> None:
         """粘贴剪贴板内容到输入框"""
@@ -510,6 +566,7 @@ class HanimeDownloaderApp(QMainWindow):
         """启动下载线程"""
         self.log_message(f"启动新下载任务: {url}")
         self.log_message(f"下载路径: {self.download_dir}")
+        self.log_message(f"无头模式: {'已启用' if self.headless_mode else '已禁用'}")
 
         # 获取任务信息
         task_info = self.task_logger.get_task_info(task_id)
@@ -519,7 +576,8 @@ class HanimeDownloaderApp(QMainWindow):
         if is_retry:
             self.task_logger.update_task_status(task_id, "running")
 
-        thread = VideoDownloadThread(url, self.download_dir, task_id, self.task_logger)
+        thread = VideoDownloadThread(url, self.download_dir, task_id,
+                                     self.task_logger, is_retry, self.headless_mode)  # 传递headless参数
         thread.task_frame = task_frame
         thread.task_id = task_id
 
