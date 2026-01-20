@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
-                             QScrollArea, QFrame, QFileDialog, QMessageBox, QCheckBox)  # 添加QCheckBox
+                             QScrollArea, QFrame, QFileDialog, QMessageBox, QCheckBox)
 
 from ToolPart.DownloadThread import VideoDownloadThread
 from ToolPart.Logger import LogEmitter, TaskLogger
@@ -51,7 +51,9 @@ class HanimeDownloaderApp(QMainWindow):
         self.log_area = None
         self.tasks_scroll = None
         self.url_input = None
-        self.stop_btn = None
+        self.delete_all_btn = None
+        self.resume_all_btn = None
+        self.pause_all_btn = None
         self.download_btn = None
         self.download_path_label = None
         self.headless_checkbox = None  # 无头模式复选框
@@ -257,10 +259,10 @@ class HanimeDownloaderApp(QMainWindow):
                 resume_btn.clicked.connect(lambda: self.resume_task(task_frame))  # type: ignore
                 button_layout.addWidget(resume_btn)
 
-                stop_btn = QPushButton("停止")
-                stop_btn.setObjectName("stop_btn")
-                stop_btn.clicked.connect(lambda: self.stop_task(task_frame))  # type: ignore
-                button_layout.addWidget(stop_btn)
+                delete_btn = QPushButton("删除")
+                delete_btn.setObjectName("delete_btn")
+                delete_btn.clicked.connect(lambda: self.delete_task(task_frame))  # type: ignore
+                button_layout.addWidget(delete_btn)
 
                 task_layout.addLayout(button_layout)
                 self.tasks_layout.addWidget(task_frame)
@@ -309,7 +311,7 @@ class HanimeDownloaderApp(QMainWindow):
                 self.log_message(f"任务已添加到队列: {url}")
 
             if self.pending_tasks:
-                self.stop_btn.setEnabled(True)
+                self.delete_all_btn.setEnabled(True)
                 self.update_queue_status()
 
                 # 启动队列中的任务
@@ -348,28 +350,13 @@ class HanimeDownloaderApp(QMainWindow):
         path_control_layout.addWidget(change_path_btn)
 
         path_layout.addLayout(path_control_layout)
-
-        # 添加无头模式设置
-        settings_layout = QHBoxLayout()
-        self.headless_checkbox = QCheckBox("开启无头模式")
-        self.headless_checkbox.setChecked(self.headless_mode)
-        self.headless_checkbox.stateChanged.connect(self.on_headless_changed)  # type: ignore
-        settings_layout.addWidget(self.headless_checkbox)
-
-        # 添加说明标签
-        headless_info = QLabel("(无头模式不显示浏览器界面，适合后台运行)")
-        headless_info.setStyleSheet("color: #95a5a6; font-size: 12px; font-style: italic;")
-        settings_layout.addWidget(headless_info)
-        settings_layout.addStretch()  # 添加弹性空间
-
-        path_layout.addLayout(settings_layout)
         main_layout.addWidget(path_group)
 
         # 输入区域
         input_group = QGroupBox("输入视频列表链接")
         input_layout = QVBoxLayout(input_group)
 
-        # 创建输入框和粘贴按钮的水平布局
+        # 创建输入框、粘贴按钮和无头模式开关的水平布局
         url_input_layout = QHBoxLayout()
 
         self.url_input = QLineEdit()
@@ -382,17 +369,33 @@ class HanimeDownloaderApp(QMainWindow):
         paste_btn.clicked.connect(self.paste_clipboard)  # type: ignore
         url_input_layout.addWidget(paste_btn)
 
+        # 添加无头模式开关
+        self.headless_checkbox = QCheckBox("无头模式")
+        self.headless_checkbox.setChecked(self.headless_mode)
+        self.headless_checkbox.stateChanged.connect(self.on_headless_changed)  # type: ignore
+        url_input_layout.addWidget(self.headless_checkbox)
+
         input_layout.addLayout(url_input_layout)
 
+        # 按钮布局 - 现在有4个按钮
         button_layout = QHBoxLayout()
+
         self.download_btn = QPushButton("开始下载")
         self.download_btn.clicked.connect(self.start_download)  # type: ignore
         button_layout.addWidget(self.download_btn)
 
-        self.stop_btn = QPushButton("停止所有下载")
-        self.stop_btn.clicked.connect(self.stop_all_downloads)  # type: ignore
-        self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.stop_btn)
+        self.pause_all_btn = QPushButton("暂停所有任务")
+        self.pause_all_btn.clicked.connect(self.pause_all_tasks)  # type: ignore
+        button_layout.addWidget(self.pause_all_btn)
+
+        self.resume_all_btn = QPushButton("继续所有任务")
+        self.resume_all_btn.clicked.connect(self.resume_all_tasks)  # type: ignore
+        button_layout.addWidget(self.resume_all_btn)
+
+        self.delete_all_btn = QPushButton("删除所有任务")
+        self.delete_all_btn.clicked.connect(self.delete_all_tasks)  # type: ignore
+        self.delete_all_btn.setEnabled(False)
+        button_layout.addWidget(self.delete_all_btn)
 
         input_layout.addLayout(button_layout)
         main_layout.addWidget(input_group)
@@ -534,10 +537,10 @@ class HanimeDownloaderApp(QMainWindow):
         resume_btn.clicked.connect(lambda: self.resume_task(task_frame))  # type: ignore
         button_layout.addWidget(resume_btn)
 
-        stop_btn = QPushButton("停止")
-        stop_btn.setObjectName("stop_btn")
-        stop_btn.clicked.connect(lambda: self.stop_task(task_frame))  # type: ignore
-        button_layout.addWidget(stop_btn)
+        delete_btn = QPushButton("删除")
+        delete_btn.setObjectName("delete_btn")
+        delete_btn.clicked.connect(lambda: self.delete_task(task_frame))  # type: ignore
+        button_layout.addWidget(delete_btn)
 
         task_layout.addLayout(button_layout)
         self.tasks_layout.addWidget(task_frame)
@@ -560,7 +563,7 @@ class HanimeDownloaderApp(QMainWindow):
             self.log_message(f"任务已添加到队列，当前队列位置: {len(self.pending_tasks)}")
             self.update_queue_status()
 
-        self.stop_btn.setEnabled(True)
+        self.delete_all_btn.setEnabled(True)
 
     def start_download_task(self, url: str, task_frame: QFrame, task_id: str) -> None:
         """启动下载线程"""
@@ -706,7 +709,7 @@ class HanimeDownloaderApp(QMainWindow):
                 update_task_status(task["frame"], f"队列中 ({i + 1})", "#f39c12")
 
     def pause_task(self, task_frame: QFrame) -> None:
-        """暂停任务"""
+        """暂停单个任务"""
         task_id = task_frame.objectName()
 
         # 首先检查任务是否在活动线程中
@@ -747,7 +750,7 @@ class HanimeDownloaderApp(QMainWindow):
                     break
 
     def resume_task(self, task_frame: QFrame) -> None:
-        """继续任务"""
+        """继续单个任务"""
         task_id = task_frame.objectName()
 
         # 首先检查任务是否在活动线程中
@@ -803,8 +806,8 @@ class HanimeDownloaderApp(QMainWindow):
                     self.update_queue_status()
                     break
 
-    def stop_task(self, task_frame: QFrame) -> None:
-        """停止单个任务"""
+    def delete_task(self, task_frame: QFrame) -> None:
+        """删除单个任务（放弃任务）"""
         task_id = task_frame.objectName()
 
         # 停止活动线程中的任务
@@ -813,9 +816,9 @@ class HanimeDownloaderApp(QMainWindow):
                 thread.stop()
                 if thread.isRunning():
                     thread.wait(5000)  # 等待线程停止
-                self.log_message(f"任务已停止: {thread.list_url}")
+                self.log_message(f"任务已删除: {thread.list_url}")
 
-                # 移除任务记录
+                # 删除任务记录
                 task_id = thread.task_id
                 self.task_logger.remove_task(task_id)
 
@@ -830,13 +833,13 @@ class HanimeDownloaderApp(QMainWindow):
                 self.start_next_task()
                 return
 
-        # 停止等待队列中的任务
+        # 删除等待队列中的任务
         for task in self.pending_tasks:
             if task["frame"] == task_frame:
                 self.pending_tasks.remove(task)
-                self.log_message(f"已从队列中移除任务: {task['url']}")
+                self.log_message(f"已从队列中删除任务: {task['url']}")
 
-                # 移除任务记录
+                # 删除任务记录
                 task_id = task["task_id"]
                 self.task_logger.remove_task(task_id)
 
@@ -845,21 +848,21 @@ class HanimeDownloaderApp(QMainWindow):
                 self.update_queue_status()
                 return
 
-    def stop_all_downloads(self) -> None:
-        """停止所有下载任务"""
-        # 停止所有活动线程
+    def pause_all_tasks(self) -> None:
+        """暂停所有任务"""
+        # 暂停所有活动线程
         for thread in self.active_threads[:]:  # 使用副本遍历
             try:
                 if thread.isRunning():
-                    thread.stop()
-                    thread.wait(5000)  # 等待5秒让线程停止
-                self.log_message(f"已停止任务: {thread.list_url}")
+                    thread.pause()
+                self.log_message(f"已暂停任务: {thread.list_url}")
 
                 # 更新任务状态为暂停
                 task_id = thread.task_id
-                self.task_logger.update_task_status(task_id, "paused")
+                if self.task_logger:
+                    self.task_logger.update_task_status(task_id, "paused")
             except Exception as e:
-                self.log_message(f"停止任务时出错: {str(e)}")
+                self.log_message(f"暂停任务时出错: {str(e)}")
 
         # 更新所有等待任务的状态为暂停
         for task in self.pending_tasks:
@@ -868,10 +871,80 @@ class HanimeDownloaderApp(QMainWindow):
                 update_task_status(task["frame"], "已暂停", "#f39c12")
                 self.task_logger.update_task_status(task["task_id"], "paused")
 
-        # 清除活动线程列表
+        self.log_message("已暂停所有下载任务")
+
+    def resume_all_tasks(self) -> None:
+        """继续所有任务"""
+        # 继续所有活动线程
+        for thread in self.active_threads:
+            try:
+                if thread.isRunning():
+                    thread.resume()
+                self.log_message(f"已继续任务: {thread.list_url}")
+
+                # 更新任务状态为运行中
+                task_id = thread.task_id
+                if self.task_logger:
+                    self.task_logger.update_task_status(task_id, "running")
+            except Exception as e:
+                self.log_message(f"继续任务时出错: {str(e)}")
+
+        # 更新所有等待任务的状态为运行中
+        for task in self.pending_tasks:
+            if task.get("status") == "paused":
+                task["status"] = "running"
+                update_task_status(task["frame"], "运行中", "#2ecc71")
+                self.task_logger.update_task_status(task["task_id"], "running")
+
+        self.log_message("已继续所有下载任务")
+
+    def delete_all_tasks(self) -> None:
+        """删除所有任务（放弃所有任务）"""
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除所有任务吗？此操作将永久删除任务记录，不可恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 删除所有活动线程
+        for thread in self.active_threads[:]:  # 使用副本遍历
+            try:
+                if thread.isRunning():
+                    thread.stop()
+                    thread.wait(5000)  # 等待5秒让线程停止
+                self.log_message(f"已删除任务: {thread.list_url}")
+
+                # 删除任务记录
+                task_id = thread.task_id
+                self.task_logger.remove_task(task_id)
+            except Exception as e:
+                self.log_message(f"删除任务时出错: {str(e)}")
+
+        # 删除所有等待任务
+        for task in self.pending_tasks:
+            try:
+                self.log_message(f"已删除任务: {task['url']}")
+
+                # 删除任务记录
+                task_id = task["task_id"]
+                self.task_logger.remove_task(task_id)
+
+                # 删除任务框
+                if task["frame"] and task["frame"].parent():
+                    task["frame"].deleteLater()
+            except Exception as e:
+                self.log_message(f"删除任务时出错: {str(e)}")
+
+        # 清除所有列表
         self.active_threads.clear()
-        self.stop_btn.setEnabled(False)
-        self.log_message("已停止所有下载任务，任务状态已保存")
+        self.pending_tasks.clear()
+        self.delete_all_btn.setEnabled(False)
+        self.log_message("已删除所有任务")
 
     def change_download_path(self) -> None:
         """更改下载路径"""
